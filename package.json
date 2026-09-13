@@ -1,0 +1,8 @@
+{
+  "name": "avantoffre-beta",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@netlify/functions": "latest"
+  }
+}
