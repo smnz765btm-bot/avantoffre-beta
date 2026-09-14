@@ -3,6 +3,20 @@ import { getStore } from "@netlify/blobs";
 
 function store(){return getStore("avantoffre-jobs",{consistency:"strong"})}
 const json=(body:any,status=200)=>new Response(JSON.stringify(body),{status,headers:{"Content-Type":"application/json; charset=utf-8","Cache-Control":"no-store"}});
+const clamp=(n:number)=>Math.max(0,Math.min(100,Math.round(n)));
+
+function normalizeScores(result:any){
+  const s=result?.scores;
+  if(!s)return;
+  const property=Number(s.property),copro=Number(s.copro),market=Number(s.market),documentation=Number(s.documentation);
+  if(Number.isFinite(property)&&Number.isFinite(copro)&&Number.isFinite(market)){
+    s.overall=clamp(property*.35+copro*.35+market*.30);
+  }
+  if(Number.isFinite(documentation)){
+    s.confidence=documentation>=85?90:documentation>=70?80:documentation>=55?68:documentation>=40?55:40;
+    s.confidence_label=documentation>=85?"très bonne":documentation>=70?"bonne":documentation>=55?"moyenne":documentation>=40?"limitée":"faible";
+  }
+}
 
 export default async(req:Request,_context:Context)=>{
   if(req.method!=="GET")return json({error:"Méthode non autorisée."},405);
@@ -13,6 +27,7 @@ export default async(req:Request,_context:Context)=>{
     const job:any=await s.get(jobId,{type:"json"});
     if(!job)return json({status:"pending"});
     if(job.status==="done"){
+      normalizeScores(job.result);
       const shareId=crypto.randomUUID().replace(/-/g,"").slice(0,20);
       const shared={result:job.result,shared_at:new Date().toISOString()};
       await s.setJSON(`share-${shareId}`,shared);
@@ -23,7 +38,7 @@ export default async(req:Request,_context:Context)=>{
     }
     if(job.status==="error"){
       const message=String(job.error||"");
-      const malformed=/JSON|array element|Expected ['",}\]]|Réponse IA non structurée/i.test(message);
+      const malformed=/JSON|array element|Expected ['\",}\]]|Réponse IA non structurée/i.test(message);
       const retryInput:any=malformed?await s.get(`retry-${jobId}`,{type:"json"}):null;
       if(retryInput){
         await s.delete(`retry-${jobId}`);
