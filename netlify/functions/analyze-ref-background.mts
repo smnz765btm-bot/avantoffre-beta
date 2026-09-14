@@ -21,7 +21,16 @@ export default async(req:Request,_context:Context)=>{
       if(doc)documents.push(doc);
       await store.delete(key);
     }
-    const input={listingUrl:String(meta.listingUrl||""),address:String(meta.address||""),extra:String(meta.extra||""),documents};
+
+    const quality=documents.map((d:any)=>{
+      const text=String(d?.text||"").trim();
+      const weak=/EXTRACTION TEXTE FAIBLE|EXTRACTION IMPOSSIBLE/i.test(text);
+      return `${String(d?.name||"document")}: ${weak?"extraction faible à confirmer":text.length>=500?"contenu texte exploitable":"contenu court mais exploitable si les informations sont présentes"} (${text.length} caractères extraits${d?.pages?`, ${d.pages} pages`:""})`;
+    }).join("\n");
+
+    const rigor=`\n\nCONSIGNE AVANTOFFRE — LECTURE DOCUMENTAIRE RIGOUREUSE ET PROPORTIONNÉE :\n- Considère comme LISIBLE tout document dont le texte transmis contient des informations exploitables. Ne dis jamais qu'un document, un PV d'AG, un décompte ou un diagnostic est « non lisible », « inexploitable » ou « non exploitable » si son contenu texte permet d'en extraire des faits.\n- Avant de déclarer une information absente, recherche-la dans TOUS les documents transmis et recoupe les années entre elles. Un élément trouvé dans un PV, une annexe, un décompte ou un PPPT doit être exploité et sourcé.\n- Distingue strictement : (1) information trouvée et confirmée, (2) information partielle, (3) information réellement absente des pièces transmises. Ne transforme jamais (2) ou (3) en anomalie du bien.\n- Une pièce manquante réduit seulement la FIABILITÉ de l'analyse ; elle ne constitue pas en elle-même un point négatif du bien et ne doit pas dégrader artificiellement le verdict.\n- Pour les PV d'AG, extrais prioritairement : travaux votés avec montant/date, travaux rejetés ou reportés, appels de fonds, sinistres, procédures, impayés, changement de syndic, contrats importants, sujets techniques récurrents. Ignore les résolutions administratives ordinaires sans impact acheteur.\n- Pour les charges, distingue charges courantes, eau/chauffage, charges récupérables, travaux exceptionnels et appels de fonds. Ne compare pas deux montants de périmètres différents comme s'ils étaient contradictoires.\n- Pour les incohérences, ne signale que celles qui sont certaines et matériellement utiles. Si deux chiffres peuvent correspondre à des périmètres ou exercices différents, explique d'abord cette hypothèse au lieu de conclure à une incohérence.\n- TON : reste factuel, rassurant et orienté décision. Commence par ce qui est établi et favorable. Ne remonte en vigilance que les éléments susceptibles de modifier réellement le prix, le budget, la sécurité, la jouissance ou la décision d'achat.\n- Si aucun risque majeur n'est établi, dis explicitement : « Aucun élément majeur identifié dans les pièces analysées ne remet en cause l'achat à ce stade. »\n\nÉTAT TECHNIQUE DES EXTRACTIONS (ceci décrit l'extraction, pas la qualité visuelle originale des PDF) :\n${quality||"Aucun document transmis."}`;
+
+    const input={listingUrl:String(meta.listingUrl||""),address:String(meta.address||""),extra:String(meta.extra||"")+rigor,documents};
     await store.setJSON(`input-${jobId}`,input);
     await store.setJSON(`retry-${jobId}`,input);
     await store.delete(`input-meta-${jobId}`);
