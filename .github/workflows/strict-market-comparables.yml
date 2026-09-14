@@ -1,0 +1,32 @@
+name: Tighten AvantOffre market comparables
+on:
+  push:
+    paths:
+      - '.github/workflows/strict-market-comparables.yml'
+permissions:
+  contents: write
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Apply strict 3 sold plus 3 active comparable methodology
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path('netlify/functions/analyze-background.mts')
+          s=p.read_text()
+          old='PRIX ET DVF : si une adresse est fournie, utilise la recherche web pour rechercher prioritairement des transactions réellement enregistrées issues de DVF/DGFiP ou DVF+ Cerema. La source officielle est prioritaire sur tout portail privé. Cherche dans cet ordre : même adresse/résidence, même rue, rues adjacentes, rayon 300 m, puis 500 m seulement si nécessaire. Retenir 3 à 5 comparables pertinents : même nature de bien, surface idéalement ±20 %, typologie proche et période récente. Pour chaque comparable, ne renseigne prix/date/surface que si la source permet de les établir. type doit être DVF pour une vente officielle, annonce pour un prix demandé. Ne transforme jamais une annonce en vente. Si les DVF fiables sont insuffisantes, dis-le explicitement et baisse market.confidence. La fourchette de valeur doit s’appuyer prioritairement sur ces ventes et tenir compte des différences documentées.'
+          new='PRIX ET VALEUR — MÉTHODE STRICTE : si une adresse est fournie, constitue DEUX groupes séparés : (A) jusqu’à 3 biens réellement VENDUS et (B) jusqu’à 3 biens actuellement À VENDRE. Ne complète jamais artificiellement un groupe : 2 excellents comparables valent mieux que 3 mauvais. Tous les comparables doivent être dans le même quartier / micro-secteur que le bien étudié ; cherche d’abord même résidence/adresse, puis même rue et rues immédiatement adjacentes. N’élargis pas à un autre quartier pour atteindre le quota. Un comparable doit être strictement similaire : même nature de bien (appartement avec appartement, maison avec maison), même typologie / nombre de pièces lorsque connu, surface cible idéalement ±10 % (tolérance maximale ±15 % uniquement si le comparable reste exceptionnellement proche et en l’indiquant), époque/type de résidence comparable lorsque connu, et caractéristiques structurantes cohérentes (étage/ascenseur, extérieur, parking, état) lorsque ces données sont disponibles. Exclure les biens atypiques ou manifestement non comparables. Pour les VENDUS, utilise prioritairement des mutations réellement enregistrées DVF/DGFiP ou DVF+ Cerema, les plus récentes possibles ; la source officielle prime. Pour les À VENDRE, recherche des annonces actives et vérifiables dans le même quartier ; il s’agit de prix demandés, jamais de ventes réalisées. Retourne au maximum exactement 3 DVF pertinents et 3 annonces actives pertinentes, chacun avec prix, surface, €/m², date, localisation/distance_note, source et une courte mention des différences utiles. Dans market.comparables, place d’abord les ventes DVF puis les annonces actives. Ne renseigne aucune donnée non vérifiée. Si moins de 3 références strictes existent dans une catégorie, retourne uniquement celles trouvées et explique la limite dans market.analysis / market.confidence. La fourchette de valeur doit être calculée d’abord à partir des ventes réalisées strictement comparables ; les annonces actives servent seulement de contrôle du positionnement actuel et ne doivent jamais peser autant qu’une vente actée. N’utilise pas une moyenne générale du quartier comme substitut à des comparables stricts. Si les comparables stricts sont insuffisants, élargis la fourchette et baisse explicitement la confiance plutôt que d’intégrer des références médiocres.'
+          if old not in s:
+              raise SystemExit('Expected market prompt not found; refusing unsafe edit')
+          s=s.replace(old,new,1)
+          p.write_text(s)
+          PY
+      - name: Commit engine update
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add netlify/functions/analyze-background.mts
+          git commit -m "Use strict 3 sold + 3 active neighborhood comparables" || exit 0
+          git push
