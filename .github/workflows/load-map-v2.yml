@@ -1,0 +1,19 @@
+name: Load map v2
+
+on:
+  push:
+    paths:
+      - '.github/workflows/load-map-v2.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Add map script
+        run: python -c "from pathlib import Path; p=Path('index.html'); s=p.read_text(); s=s if '/map-enhancements.js?v=1' in s else s.replace('</body>', '<script src=\"/map-enhancements.js?v=1\"></script></body>'); p.write_text(s)"
+      - name: Commit changes
+        run: git config user.name 'AvantOffre Bot' && git config user.email 'actions@users.noreply.github.com' && git add index.html && (git diff --cached --quiet || (git commit -m 'Charge la carte enrichie validée' && git push))
