@@ -1,0 +1,96 @@
+name: Refine validated AvantOffre map
+
+on:
+  push:
+    paths:
+      - '.github/workflows/refine-validated-map.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Patch map UI
+        run: |
+          python <<'PY'
+          from pathlib import Path
+          import re
+
+          p=Path('ui-enhancements.js')
+          s=p.read_text()
+
+          extra_css=r'''
+/* Carte validée : lecture claire, marqueurs métier et colonne de proximité allégée */
+.ao-location{grid-template-columns:minmax(0,1.7fr) minmax(315px,.72fr);gap:12px;align-items:stretch}
+.ao-mapcard{position:relative;min-height:430px}.ao-maphead{padding:15px 17px 12px}.ao-maphead>div{display:flex;flex-direction:column;gap:2px}.ao-maphead b{font-size:15px}.ao-maphead small{font-size:10px;color:#728792}.ao-maphead a{font-size:10px;color:#0a806b;font-weight:850;text-decoration:none}.ao-mapcanvas{height:365px;width:100%;background:#eef3f5}.ao-mapfoot{padding:9px 14px}.ao-nearby{padding:15px 16px}.ao-nearby-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:7px}.ao-nearby-head h3{margin:0}.ao-nearby-head span{font-size:9px;color:#8797a0}.ao-near-group{padding:8px 0 9px;border-bottom:1px solid #edf1f2}.ao-near-group:last-child{border-bottom:0}.ao-near-group-title{display:flex;align-items:center;gap:8px;font-size:11px;font-weight:900;color:#123b55;margin-bottom:5px}.ao-group-icon{width:28px;height:28px;border-radius:50%;display:grid;place-items:center;font-size:12px;font-weight:950}.ao-group-icon.transport{background:#eaf3ff;color:#1265c8}.ao-group-icon.shop{background:#fff4e5;color:#e27b12}.ao-group-icon.school{background:#f2ecff;color:#7651d6}.ao-group-icon.health{background:#ffeded;color:#dd4d5d}.ao-group-icon.park{background:#e9f8f3;color:#138c6d}.ao-near-line{display:grid;grid-template-columns:1fr auto;gap:10px;padding:3px 0;font-size:10.5px}.ao-near-line b{font-weight:700;color:#38576a}.ao-near-line span:last-child{color:#536d7d;white-space:nowrap}.ao-map-pin{width:32px;height:32px;border-radius:50% 50% 50% 0;background:#0b3a64;border:3px solid #fff;transform:rotate(-45deg);box-shadow:0 4px 12px rgba(8,45,73,.24)}.ao-map-pin:after{content:"";position:absolute;width:8px;height:8px;border-radius:50%;background:#fff;left:9px;top:9px}.ao-poi-marker{width:27px;height:27px;border-radius:50%;display:grid;place-items:center;color:#fff;font-weight:950;font-size:11px;border:2px solid #fff;box-shadow:0 2px 8px rgba(8,45,73,.18)}.ao-poi-marker.metro,.ao-poi-marker.bus,.ao-poi-marker.tram{background:#1675df}.ao-poi-marker.shop{background:#ef8a19}.ao-poi-marker.school{background:#7756da}.ao-poi-marker.health{background:#e65868}.ao-poi-marker.park{background:#13946f}.leaflet-tooltip.ao-map-label{border:0!important;border-radius:9px!important;box-shadow:0 3px 12px rgba(8,45,73,.13)!important;color:#0b3551!important;font-size:10px!important;font-weight:800!important;padding:5px 7px!important}.leaflet-control-attribution{font-size:8px!important}.ao-location-note{padding:9px 12px;font-size:10px}.ao-location-summary{color:#0c6f5d;font-weight:750}
+@media(max-width:900px){.ao-location{grid-template-columns:1fr}.ao-mapcard{min-height:0}.ao-mapcanvas{height:300px}}
+'''
+          if 'Carte validée : lecture claire' not in s:
+              marker='`;document.head.appendChild(st);'
+              s=s.replace(marker, extra_css+'\n'+marker)
+
+          new_js=r'''
+let aoLocationBusy=false;
+function aoLoadLeaflet(){return new Promise((resolve,reject)=>{if(window.L)return resolve(window.L);if(!document.querySelector('link[data-ao-leaflet]')){const l=document.createElement('link');l.rel='stylesheet';l.href='https://unpkg.com/leaflet@1.9.4/dist/leaflet.css';l.dataset.aoLeaflet='1';document.head.appendChild(l)}const existing=document.querySelector('script[data-ao-leaflet]');if(existing){existing.addEventListener('load',()=>resolve(window.L),{once:true});existing.addEventListener('error',reject,{once:true});return}const sc=document.createElement('script');sc.src='https://unpkg.com/leaflet@1.9.4/dist/leaflet.js';sc.dataset.aoLeaflet='1';sc.onload=()=>resolve(window.L);sc.onerror=reject;document.head.appendChild(sc)})}
+const aoIconClass=x=>x.icon==='metro'?'metro':x.icon==='bus'?'bus':x.icon==='tram'?'tram':x.category==='Commerces'?'shop':x.category==='Écoles'?'school':x.category==='Santé'?'health':'park';
+const aoIconText=x=>x.icon==='metro'?'M':x.icon==='bus'?'B':x.icon==='tram'?'T':x.category==='Commerces'?'C':x.category==='Écoles'?'É':x.category==='Santé'?'+':'V';
+const aoGroupMeta=c=>c==='Transports'?['transport','▣']:c==='Commerces'?['shop','C']:c==='Écoles'?['school','É']:c==='Santé'?['health','+']:['park','V'];
+function aoTransportLabel(x){let base=x.subtype||'Transport';if(x.ref)base+=' '+x.ref;let name=x.name&&x.name!==x.subtype?x.name:'';return name?`${base} — ${name}`:base}
+function aoItemLabel(x){return x.category==='Transports'?aoTransportLabel(x):(x.name||x.subtype||x.category)}
+function aoGroupHtml(category,arr){if(!arr.length)return'';const [cl,ic]=aoGroupMeta(category);const max=category==='Transports'?3:2;const lines=arr.slice(0,max).map(x=>`<div class="ao-near-line"><b>${esc(aoItemLabel(x))}</b><span>${esc(x.walk_min)} min</span></div>`).join('');return `<div class="ao-near-group"><div class="ao-near-group-title"><span class="ao-group-icon ${cl}">${ic}</span>${esc(category)}</div>${lines}</div>`}
+async function addLocationBlock(){
+  const report=document.querySelector('#report'),overview=document.querySelector('#overview');
+  if(!report||report.classList.contains('hidden')||!overview||overview.querySelector('#aoLocation')||aoLocationBusy)return;
+  const address=(document.querySelector('#address')?.value||'').trim();if(!address)return;
+  aoLocationBusy=true;
+  const holder=document.createElement('div');holder.id='aoLocation';holder.className='ao-location';holder.innerHTML='<div class="ao-mapcard"><div class="ao-location-loading">Localisation en cours…</div></div>';
+  const first=overview.querySelector('.reportCard');first?first.after(holder):overview.prepend(holder);
+  try{
+    const gr=await fetch('/api/address-suggest?q='+encodeURIComponent(address),{cache:'no-store'}),gd=await gr.json(),g=Array.isArray(gd?.suggestions)?gd.suggestions[0]:null;
+    if(!g||!Number.isFinite(Number(g.lat))||!Number.isFinite(Number(g.lon)))throw new Error('Adresse non localisée');
+    const lat=Number(g.lat),lon=Number(g.lon);
+    let nearby=[];try{const nr=await fetch(`/api/nearby?lat=${encodeURIComponent(lat)}&lon=${encodeURIComponent(lon)}`,{cache:'no-store'}),nd=await nr.json();nearby=Array.isArray(nd?.nearby)?nd.nearby:[]}catch{}
+    const google=`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(address)}`;
+    const groups=['Transports','Commerces','Écoles','Santé','Espaces verts'];
+    const groupsHtml=groups.map(c=>aoGroupHtml(c,nearby.filter(x=>x.category===c))).join('');
+    holder.innerHTML=`<div class="ao-mapcard"><div class="ao-maphead"><div><b>Localisation</b><small>Un aperçu pratique du quartier</small></div><a href="${google}" target="_blank" rel="noopener">Voir sur Google Maps ↗</a></div><div id="aoMapCanvas" class="ao-mapcanvas"></div><div class="ao-mapfoot"><span>${esc(address)}</span><span>Données OpenStreetMap</span></div></div><div class="ao-nearby"><div class="ao-nearby-head"><h3>À proximité</h3><span>Temps à pied indicatifs</span></div>${groupsHtml||'<div class="ao-location-empty">Les informations de proximité ne sont pas disponibles pour le moment.</div>'}<div class="ao-location-note ao-location-summary">Repères utiles autour du bien, volontairement limités aux informations les plus pertinentes.</div></div>`;
+    const L=await aoLoadLeaflet();
+    const map=L.map('aoMapCanvas',{zoomControl:true,scrollWheelZoom:false,attributionControl:true}).setView([lat,lon],15);
+    L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png',{maxZoom:19,attribution:'&copy; OpenStreetMap &copy; CARTO'}).addTo(map);
+    const pin=L.divIcon({className:'',html:'<div class="ao-map-pin"></div>',iconSize:[32,38],iconAnchor:[16,34]});
+    L.marker([lat,lon],{icon:pin,zIndexOffset:1000}).addTo(map).bindTooltip(address,{permanent:false,direction:'top',className:'ao-map-label'});
+    const shown=[];
+    groups.forEach(category=>{const max=category==='Transports'?4:2;nearby.filter(x=>x.category===category).slice(0,max).forEach(x=>{if(!Number.isFinite(Number(x.lat))||!Number.isFinite(Number(x.lon)))return;const cls=aoIconClass(x),txt=aoIconText(x),icon=L.divIcon({className:'',html:`<div class="ao-poi-marker ${cls}">${txt}</div>`,iconSize:[29,29],iconAnchor:[14,14]});const m=L.marker([Number(x.lat),Number(x.lon)],{icon}).addTo(map).bindTooltip(`${aoItemLabel(x)} · ${x.walk_min} min`,{direction:'top',className:'ao-map-label'});shown.push(m)})});
+    setTimeout(()=>map.invalidateSize(),80);
+  }catch(e){console.error('AvantOffre localisation',e);holder.remove()}finally{aoLocationBusy=false}
+}
+'''
+          pattern=r'let aoLocationBusy=false;.*?\n\nfunction polish\(\)\{'
+          repl=new_js+'\nfunction polish(){'
+          s2,n=re.subn(pattern,repl,s,flags=re.S)
+          if n!=1:
+              raise SystemExit(f'Bloc localisation non remplacé: {n}')
+          s=s2
+          p.write_text(s)
+
+          idx=Path('index.html')
+          z=idx.read_text()
+          z=re.sub(r'/ui-enhancements\.js\?v=\d+', '/ui-enhancements.js?v=10', z)
+          idx.write_text(z)
+          PY
+      - name: Commit changes
+        run: |
+          git config user.name "AvantOffre Bot"
+          git config user.email "actions@users.noreply.github.com"
+          git add ui-enhancements.js index.html
+          if git diff --cached --quiet; then exit 0; fi
+          git commit -m "Aligne la carte sur le rendu validé"
+          git push
