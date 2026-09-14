@@ -16,7 +16,6 @@ jobs:
           from pathlib import Path
           import re
 
-          # 1) Upgrade browser-side PDF extraction with per-page OCR fallback.
           p=Path('index.html')
           s=p.read_text()
           pattern=re.compile(r"async function extractFile\(f\)\{.*?\}async function uploadDocs\(jobId\)\{",re.S)
@@ -44,7 +43,6 @@ jobs:
               raise SystemExit(f'extractFile pattern not found exactly once: {n}')
           p.write_text(ns)
 
-          # 2) Make client feedback distinguish partial/failed OCR instead of generic scan error.
           p=Path('ui-enhancements.js');u=p.read_text()
           old="if(Number(chars)<80)return{reason:'Non lisible',solution:'PDF probablement scanné : utilisez l’original ou appliquez un OCR.',kind:'bad'};"
           new="if(Number(chars)<80)return{reason:e.includes('partielle')?'Lecture partielle après seconde lecture':'Lecture insuffisante après seconde lecture',solution:e.includes('partielle')?'Certaines pages restent difficiles à exploiter. Fournissez si possible le PDF natif ou une version plus nette.':'AvantOffre a tenté une seconde lecture OCR sans obtenir assez de contenu fiable. Fournissez une version non protégée ou plus nette.',kind:e.includes('partielle')?'warn':'bad'};"
@@ -52,11 +50,9 @@ jobs:
               raise SystemExit('reasonFor pattern not found')
           p.write_text(u.replace(old,new,1))
 
-          # 3) Persist extraction quality metadata server-side and block documents that remain unreadable.
           p=Path('netlify/functions/upload-document.mts')
           p.write_text('''import type { Context, Config } from "@netlify/functions";\nimport { getStore } from "@netlify/blobs";\n\nfunction jobStore(){return getStore("avantoffre-jobs",{consistency:"strong"})}\nconst json=(body:any,status=200)=>new Response(JSON.stringify(body),{status,headers:{"Content-Type":"application/json; charset=utf-8","Cache-Control":"no-store"}});\n\nexport default async(req:Request,_context:Context)=>{\n  if(req.method!=="POST")return json({error:"Méthode non autorisée."},405);\n  try{\n    const body:any=await req.json();\n    const jobId=String(body?.jobId||"").replace(/[^a-zA-Z0-9_-]/g,"").slice(0,80);\n    const index=Number(body?.index);\n    const name=String(body?.name||"document").slice(0,240);\n    const text=String(body?.text||"");\n    const pages=Number.isFinite(Number(body?.pages))?Number(body.pages):null;\n    const quality=["ok","partial","failed"].includes(String(body?.quality))?String(body.quality):text.trim().length>=80?"ok":"failed";\n    const ocrPages=Math.max(0,Number(body?.ocrPages)||0);\n    const weakPages=Math.max(0,Number(body?.weakPages)||0);\n    const pageStats=Array.isArray(body?.pageStats)?body.pageStats.slice(0,250):[];\n    if(!jobId||!Number.isInteger(index)||index<0||index>29)return json({error:"Référence de document invalide."},400);\n    if(text.length>500000)return json({error:"Document trop volumineux après extraction."},413);\n    if(quality==="failed"||text.trim().length<80)return json({error:"Lecture insuffisante après seconde lecture OCR. Le document n'est pas assez exploitable pour une analyse fiable.",quality,ocrPages,weakPages,chars:text.length},422);\n    const key=`doc-${jobId}-${index}`;\n    await jobStore().setJSON(key,{name,text,pages,chars:text.length,quality,ocrPages,weakPages,pageStats});\n    if(quality==="partial")return json({ref:key,index,name,chars:79,actualChars:text.length,quality,ocrPages,weakPages,error:`Lecture partielle après OCR : ${weakPages} page(s) restent difficiles à exploiter.`});\n    return json({ref:key,index,name,chars:text.length,actualChars:text.length,quality,ocrPages,weakPages});\n  }catch(err:any){\n    console.error("AvantOffre upload document error",err);\n    return json({error:err?.message||"Impossible d'envoyer le document."},500);\n  }\n};\n\nexport const config:Config={path:"/api/upload-document"};\n''')
 
-          # 4) Feed extraction quality explicitly to the analysis worker.
           p=Path('netlify/functions/analyze-ref-background.mts');a=p.read_text()
           old="const weak=/EXTRACTION TEXTE FAIBLE|EXTRACTION IMPOSSIBLE/i.test(text);\n      return `${String(d?.name||\"document\")}: ${weak?\"extraction faible à confirmer\":text.length>=500?\"contenu texte exploitable\":\"contenu court mais exploitable si les informations sont présentes\"} (${text.length} caractères extraits${d?.pages?`, ${d.pages} pages`:\"\"})`;"
           new="const weak=/EXTRACTION TEXTE FAIBLE|EXTRACTION IMPOSSIBLE/i.test(text);\n      const q=String(d?.quality||\"\");const qLabel=q===\"partial\"?`lecture partielle après OCR (${Number(d?.weakPages)||0} page(s) faibles)`:q===\"ok\"?`lecture contrôlée${Number(d?.ocrPages)?` avec OCR sur ${Number(d.ocrPages)} page(s)`:\"\"}`:weak?\"extraction faible à confirmer\":text.length>=500?\"contenu texte exploitable\":\"contenu court mais exploitable si les informations sont présentes\";\n      return `${String(d?.name||\"document\")}: ${qLabel} (${text.length} caractères extraits${d?.pages?`, ${d.pages} pages`:\"\"})`;"
@@ -77,7 +73,7 @@ jobs:
             'OCR engine loader':'tesseract.js@5' in index,
             'per-page OCR fallback':'aoOcrPage' in index and 'AO_MIN_NATIVE_PAGE_CHARS' in index,
             'quality status':'quality=totalChars<80' in index,
-            'server blocks unreadable':'status,422' in upload and 'quality==="failed"' in upload,
+            'server blocks unreadable':'422' in upload and 'quality==="failed"' in upload,
             'partial read surfaced':'Lecture partielle après OCR' in upload and 'Lecture partielle après seconde lecture' in ui,
             'worker receives quality':'lecture contrôlée' in worker and 'weakPages' in worker,
           }
