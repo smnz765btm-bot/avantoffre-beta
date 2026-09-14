@@ -5,7 +5,7 @@
   const st=document.createElement('style');st.textContent=css;document.head.appendChild(st);
 
   function setupAddress(){
-    const input=document.querySelector('#address');if(!input)return;
+    const input=document.querySelector('#address');if(!input||input.dataset.autocompleteReady)return;input.dataset.autocompleteReady='1';
     const wrap=document.createElement('div');wrap.className='addressWrap';input.parentNode.insertBefore(wrap,input);wrap.appendChild(input);
     const box=document.createElement('div');box.className='addressSuggest';wrap.appendChild(box);
     let timer=null,controller=null,items=[],active=-1,selectedLabel='';
@@ -34,8 +34,9 @@
     info.innerHTML=`<span class="confidenceDot"></span><b>Fiabilité de l’analyse : ${label}</b> <span>— la complétude du dossier influence la confiance, pas la note du bien.</span>`;
   }
 
-  document.addEventListener('DOMContentLoaded',()=>{
+  function init(){
     setupAddress();
-    const scores=document.querySelector('#scores');if(scores){new MutationObserver(()=>simplifyScores()).observe(scores,{childList:true,subtree:true});simplifyScores()}
-  });
+    const scores=document.querySelector('#scores');if(scores&&!scores.dataset.scoreObserver){scores.dataset.scoreObserver='1';new MutationObserver(()=>simplifyScores()).observe(scores,{childList:true,subtree:true});simplifyScores()}
+  }
+  if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',init);else init();
 })();
