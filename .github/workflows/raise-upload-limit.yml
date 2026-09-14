@@ -39,7 +39,7 @@ jobs:
             return{name:f.name,text,pages:pdf.numPages,quality,ocrPages,weakPages,pageStats}
           }
           async function uploadDocs(jobId){'''
-          ns,n=pattern.subn(replacement,s,1)
+          ns,n=pattern.subn(lambda _m: replacement,s,1)
           if n!=1:
               raise SystemExit(f'extractFile pattern not found exactly once: {n}')
           p.write_text(ns)
