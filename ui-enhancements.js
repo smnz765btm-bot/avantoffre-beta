@@ -49,7 +49,7 @@ async function addLocationBlock(){
   }catch(e){holder.remove()}finally{aoLocationBusy=false}
 }
 
-function polish(){simplifyScores();softenVigilance();reportScope();compact();if(!document.querySelector('#report')?.classList.contains('hidden'))renderReadWarnings(true)}
+function polish(){simplifyScores();softenVigilance();reportScope();compact();addLocationBlock();if(!document.querySelector('#report')?.classList.contains('hidden'))renderReadWarnings(true)}
 function init(){installUploadMonitor();setupAddress();setupConsent();const list=document.querySelector('#filesList');if(list)new MutationObserver(()=>requestAnimationFrame(renderFileStates)).observe(list,{childList:true});document.querySelector('#files')?.addEventListener('change',()=>setTimeout(()=>{readState.clear();renderFileStates();renderReadWarnings(false)},30));renderFileStates();const report=document.querySelector('#report');if(report)new MutationObserver(()=>requestAnimationFrame(polish)).observe(report,{childList:true,subtree:true,attributes:true});polish()}
 if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',init);else init();
 })();
