@@ -1,0 +1,43 @@
+name: Fix location block display
+
+on:
+  push:
+    paths:
+      - '.github/workflows/fix-location-block.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Patch location rendering
+        run: |
+          python <<'PY'
+          from pathlib import Path
+          ui=Path('ui-enhancements.js')
+          s=ui.read_text()
+          old="function polish(){simplifyScores();softenVigilance();reportScope();compact();if(!document.querySelector('#report')?.classList.contains('hidden'))renderReadWarnings(true)}"
+          new="function polish(){simplifyScores();softenVigilance();reportScope();compact();addLocationBlock();if(!document.querySelector('#report')?.classList.contains('hidden'))renderReadWarnings(true)}"
+          if old not in s:
+              raise SystemExit('polish() pattern not found')
+          s=s.replace(old,new)
+          ui.write_text(s)
+          idx=Path('index.html')
+          h=idx.read_text()
+          for v in ['3','4','5','6']:
+              h=h.replace(f'/ui-enhancements.js?v={v}', '/ui-enhancements.js?v=7')
+          idx.write_text(h)
+          PY
+      - name: Commit changes
+        run: |
+          git config user.name "AvantOffre Bot"
+          git config user.email "actions@users.noreply.github.com"
+          git add ui-enhancements.js index.html
+          git commit -m "Affiche la carte de localisation dans la synthèse"
+          git push
