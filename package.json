@@ -1,7 +1,10 @@
 {
-  "name": "avantoffre-beta",
+  "name": "revisite-beta",
   "private": true,
   "type": "module",
+  "scripts": {
+    "build": "node build-revisite.js"
+  },
   "dependencies": {
     "@netlify/functions": "latest",
     "@netlify/blobs": "latest"
