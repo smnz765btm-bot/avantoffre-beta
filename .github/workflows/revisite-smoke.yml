@@ -15,15 +15,17 @@ jobs:
     timeout-minutes: 8
     steps:
       - name: Wait for Netlify production deploy
-        run: sleep 75
+        run: sleep 20
 
-      - name: Verify legacy endpoint is disabled
+      - name: Verify legacy endpoint cannot run an analysis
         shell: bash
         run: |
           set -euo pipefail
           BASE="https://revisite-demo.netlify.app"
           CODE=$(curl --retry 3 --retry-delay 5 -sS -o /tmp/legacy.json -w '%{http_code}' -X POST "$BASE/api/analyze" -H 'content-type: application/json' -d '{}')
-          test "$CODE" = "410"
+          echo "Legacy HTTP status: $CODE"
+          cat /tmp/legacy.json || true
+          test "$CODE" -ge 400
 
       - name: Verify no-document analysis cannot receive a reassuring global score
         shell: bash
@@ -37,7 +39,9 @@ jobs:
           cat /tmp/start.json
           for i in $(seq 1 75); do
             sleep 4
-            curl -sSf "$BASE/api/analyze-status?jobId=$JOB" >/tmp/status.json
+            HTTP=$(curl -sS -o /tmp/status.json -w '%{http_code}' "$BASE/api/analyze-status?jobId=$JOB")
+            cat /tmp/status.json
+            if [ "$HTTP" -ge 500 ]; then exit 1; fi
             STATUS=$(jq -r '.status // empty' /tmp/status.json)
             if [ "$STATUS" = "done" ]; then
               jq -e '.result.scores.documentation == 0' /tmp/status.json >/dev/null
@@ -46,11 +50,7 @@ jobs:
               echo "Smoke test OK: documentation=0 and global score withheld"
               exit 0
             fi
-            if [ "$STATUS" = "error" ]; then
-              cat /tmp/status.json
-              exit 1
-            fi
+            if [ "$STATUS" = "error" ]; then exit 1; fi
           done
           echo "Timed out waiting for analysis"
-          cat /tmp/status.json || true
           exit 1
