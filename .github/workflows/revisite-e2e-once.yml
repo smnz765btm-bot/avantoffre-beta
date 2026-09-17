@@ -1,0 +1,52 @@
+name: ReVisite one-shot end-to-end check
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/revisite-e2e-once.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  e2e:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - name: Run one low-cost end-to-end analysis
+        shell: bash
+        run: |
+          set -euo pipefail
+          BASE="https://revisite-demo.netlify.app"
+          JOB="smoke_e2e_${GITHUB_RUN_ID}_${GITHUB_RUN_ATTEMPT}"
+          DOC='FICHE SYNTHETIQUE TEST REVISITE. Appartement T3. Surface 62,33 m2. Deux chambres. Prix affiche 159900 euros. DPE C. Charges annuelles du lot 1200 euros. Aucune information sur des travaux votes ni sur des impayes collectifs.'
+
+          UPLOAD=$(jq -n --arg job "$JOB" --arg text "$DOC" '{jobId:$job,index:0,name:"fiche_test_revisite.txt",text:$text,pages:1,quality:"ok",ocrPages:0,weakPages:0}')
+          curl -sSf -X POST "$BASE/api/upload-document" -H 'content-type: application/json' -d "$UPLOAD" >/tmp/upload.json
+          REF=$(jq -r '.ref' /tmp/upload.json)
+          test -n "$REF" -a "$REF" != "null"
+
+          START=$(jq -n --arg job "$JOB" --arg ref "$REF" '{jobId:$job,address:"19 impasse Gaston Plante 31200 Toulouse",documentRefs:[$ref],extra:"Test technique ReVisite. Restitution concise et factuelle."}')
+          curl -sSf -X POST "$BASE/api/analyze-background" -H 'content-type: application/json' -d "$START" >/tmp/start.json
+
+          for i in $(seq 1 40); do
+            sleep 8
+            HTTP=$(curl -sS -o /tmp/status.json -w '%{http_code}' "$BASE/api/analyze-status?jobId=$JOB")
+            cat /tmp/status.json
+            if [ "$HTTP" -ge 500 ]; then exit 1; fi
+            STATUS=$(jq -r '.status // empty' /tmp/status.json)
+            if [ "$STATUS" = "done" ]; then
+              jq -e '.result.analysis.property.surface_m2 == 62.33' /tmp/status.json >/dev/null
+              jq -e '.result.analysis.property.rooms == 3' /tmp/status.json >/dev/null
+              jq -e '.result.analysis.property.asking_price == 159900' /tmp/status.json >/dev/null
+              jq -e '.result.meta.document_count == 1' /tmp/status.json >/dev/null
+              jq -e '.result.meta.usage.total_tokens > 0' /tmp/status.json >/dev/null
+              jq -e '.result.scores.documentation >= 0 and .result.scores.documentation <= 100' /tmp/status.json >/dev/null
+              echo "ReVisite E2E OK"
+              exit 0
+            fi
+            if [ "$STATUS" = "error" ]; then exit 1; fi
+          done
+          echo "ReVisite E2E timeout"
+          exit 1
