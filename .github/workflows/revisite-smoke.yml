@@ -1,0 +1,56 @@
+name: ReVisite live smoke test
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/revisite-smoke.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - name: Wait for Netlify production deploy
+        run: sleep 75
+
+      - name: Verify legacy endpoint is disabled
+        shell: bash
+        run: |
+          set -euo pipefail
+          BASE="https://revisite-demo.netlify.app"
+          CODE=$(curl --retry 3 --retry-delay 5 -sS -o /tmp/legacy.json -w '%{http_code}' -X POST "$BASE/api/analyze" -H 'content-type: application/json' -d '{}')
+          test "$CODE" = "410"
+
+      - name: Verify no-document analysis cannot receive a reassuring global score
+        shell: bash
+        run: |
+          set -euo pipefail
+          BASE="https://revisite-demo.netlify.app"
+          JOB="smoke_${GITHUB_RUN_ID}_${GITHUB_RUN_ATTEMPT}"
+          curl --retry 3 --retry-delay 5 -sSf -X POST "$BASE/api/analyze-background" \
+            -H 'content-type: application/json' \
+            -d "{\"jobId\":\"$JOB\",\"address\":\"1 rue d Alsace Lorraine 31000 Toulouse\",\"documentRefs\":[],\"extra\":\"Test automatique de fiabilité. Ne déduire aucune caractéristique non documentée.\"}" >/tmp/start.json
+          cat /tmp/start.json
+          for i in $(seq 1 75); do
+            sleep 4
+            curl -sSf "$BASE/api/analyze-status?jobId=$JOB" >/tmp/status.json
+            STATUS=$(jq -r '.status // empty' /tmp/status.json)
+            if [ "$STATUS" = "done" ]; then
+              jq -e '.result.scores.documentation == 0' /tmp/status.json >/dev/null
+              jq -e '.result.scores.overall == null' /tmp/status.json >/dev/null
+              jq -e '.result.meta.score_withheld == true' /tmp/status.json >/dev/null
+              echo "Smoke test OK: documentation=0 and global score withheld"
+              exit 0
+            fi
+            if [ "$STATUS" = "error" ]; then
+              cat /tmp/status.json
+              exit 1
+            fi
+          done
+          echo "Timed out waiting for analysis"
+          cat /tmp/status.json || true
+          exit 1
