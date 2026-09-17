@@ -1,9 +1,10 @@
 import type { Context, Config } from "@netlify/functions";
-import { jobStore, expiresIn } from "../lib/storage.mjs";
+import { jobStore, expiresIn, isExpired } from "../lib/storage.mjs";
 
 const json=(body:any,status=200)=>new Response(JSON.stringify(body),{status,headers:{"Content-Type":"application/json; charset=utf-8","Cache-Control":"no-store"}});
 const limitEnv=(key:string,fallback:number)=>{const n=Number(Netlify.env.get(key));return Number.isFinite(n)&&n>0?Math.floor(n):fallback};
 const hash=async(value:string)=>Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256",new TextEncoder().encode(value)))).map(b=>b.toString(16).padStart(2,"0")).join("").slice(0,24);
+const CACHE_VERSION="revisite-analysis-v3";
 
 async function checkRateLimit(store:any,req:Request){
   const ip=(req.headers.get("x-nf-client-connection-ip")||req.headers.get("x-forwarded-for")?.split(",")[0]||"unknown").trim();
@@ -23,39 +24,64 @@ async function checkRateLimit(store:any,req:Request){
   return{ok:true};
 }
 
+async function resolveDocuments(store:any,jobId:string,inlineDocs:any[],refs:string[]){
+  if(!refs.length)return inlineDocs;
+  const loaded=await Promise.all(refs.map(ref=>store.get(ref,{type:"json"})));
+  const documents=loaded.filter(Boolean);
+  if(documents.length!==refs.length)throw new Error("Un ou plusieurs documents temporaires ne sont plus disponibles. Réimportez-les puis relancez l'analyse.");
+  return documents;
+}
+
+async function analysisCacheKey(listingUrl:string,address:string,extra:string,documents:any[]){
+  const fingerprints:string[]=[];
+  for(const d of documents){
+    const existing=String(d?.contentHash||"").trim();
+    fingerprints.push(existing||await hash(`${String(d?.name||"")}\n${String(d?.text||"")}`));
+  }
+  return `analysis-cache-${await hash(JSON.stringify({v:CACHE_VERSION,listingUrl,address,extra,documents:fingerprints}))}`;
+}
+
 export default async(req:Request,_context:Context)=>{
-  let jobId="";const store=jobStore();
+  let jobId="";const store=jobStore();let documentRefs:string[]=[];
   try{
     if(req.method!=="POST")return json({error:"Méthode non autorisée."},405);
     let body:any;try{body=await req.json()}catch{return json({error:"La demande envoyée à ReVisite est invalide."},400)}
     jobId=String(body?.jobId||"").replace(/[^a-zA-Z0-9_-]/g,"").slice(0,80);
     if(!jobId)return json({error:"Identifiant d'analyse manquant."},400);
     const listingUrl=String(body?.listingUrl||"").trim().slice(0,1200),address=String(body?.address||"").trim().slice(0,300);
-    const documents=Array.isArray(body?.documents)?body.documents.slice(0,30):[];
-    const documentRefs=Array.isArray(body?.documentRefs)?body.documentRefs.slice(0,30).map((x:any)=>String(x||"")).filter((x:string)=>x.startsWith(`doc-${jobId}-`)):[];
+    const inlineDocuments=Array.isArray(body?.documents)?body.documents.slice(0,30):[];
+    documentRefs=Array.isArray(body?.documentRefs)?body.documentRefs.slice(0,30).map((x:any)=>String(x||"")).filter((x:string)=>x.startsWith(`doc-${jobId}-`)):[];
     const extra=String(body?.extra||"").slice(0,7000);
-    if(!listingUrl&&!address&&documents.length===0&&documentRefs.length===0)return json({error:"Ajoutez au moins une annonce, une adresse ou un document."},400);
+    if(!listingUrl&&!address&&inlineDocuments.length===0&&documentRefs.length===0)return json({error:"Ajoutez au moins une annonce, une adresse ou un document."},400);
 
-    const rate=await checkRateLimit(store,req);if(!rate.ok)return json({error:rate.message},429);
-    const expiry=expiresIn(1000*60*60*3);
-    await store.setJSON(jobId,{status:"queued",started_at:new Date().toISOString(),progress:"Analyse en attente",expires_at:expiry});
-    let workerPath="/api/worker-background";
-    if(documentRefs.length){
-      await store.setJSON(`input-meta-${jobId}`,{listingUrl,address,extra,documentRefs,expires_at:expiry});
-      workerPath="/api/worker-ref-background";
-    }else{
-      const input={listingUrl,address,documents,extra,expires_at:expiry};
-      await store.setJSON(`input-${jobId}`,input);await store.setJSON(`retry-${jobId}`,input);
+    const documents=await resolveDocuments(store,jobId,inlineDocuments,documentRefs);
+    const cacheKey=await analysisCacheKey(listingUrl,address,extra,documents);
+    const cached:any=await store.get(cacheKey,{type:"json"});
+    if(cached?.result&&!isExpired(cached)){
+      const result=structuredClone(cached.result);
+      result.meta={...(result.meta||{}),cache_hit:true,cache_reused_at:new Date().toISOString()};
+      await store.setJSON(jobId,{status:"done",result,expires_at:expiresIn(1000*60*60)});
+      await Promise.allSettled(documentRefs.map(ref=>store.delete(ref)));
+      return json({jobId,status:"done",cache_hit:true},202);
     }
-    const workerUrl=new URL(workerPath,req.url);
+
+    const rate=await checkRateLimit(store,req);if(!rate.ok){await Promise.allSettled(documentRefs.map(ref=>store.delete(ref)));return json({error:rate.message},429)}
+    const expiry=expiresIn(1000*60*60*3),input={listingUrl,address,documents,extra,cacheKey,expires_at:expiry};
+    await store.setJSON(jobId,{status:"queued",started_at:new Date().toISOString(),progress:"Analyse en attente",expires_at:expiry});
+    await store.setJSON(`input-${jobId}`,input);
+    await store.setJSON(`retry-${jobId}`,input);
+    await Promise.allSettled(documentRefs.map(ref=>store.delete(ref)));
+
+    const workerUrl=new URL("/api/worker-background",req.url);
     const workerResponse=await fetch(workerUrl,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({jobId})});
     if(!workerResponse.ok){
-      await Promise.allSettled([store.delete(`input-${jobId}`),store.delete(`input-meta-${jobId}`),store.delete(`retry-${jobId}`)]);
+      await Promise.allSettled([store.delete(`input-${jobId}`),store.delete(`retry-${jobId}`)]);
       throw new Error(`Le moteur d'analyse n'a pas pu démarrer (${workerResponse.status}).`);
     }
     return json({jobId,status:"queued"},202);
   }catch(err:any){
     console.error("ReVisite start error",err);
+    if(documentRefs.length)await Promise.allSettled(documentRefs.map(ref=>store.delete(ref)));
     if(jobId)await store.setJSON(jobId,{status:"error",error:err?.message||"Impossible de lancer l'analyse.",expires_at:expiresIn(1000*60*60)});
     return json({error:err?.message||"Impossible de lancer l'analyse."},500);
   }
