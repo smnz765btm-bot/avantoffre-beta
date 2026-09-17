@@ -80,13 +80,12 @@ export default async(req:Request,_context:Context)=>{
     const expiry=expiresIn(1000*60*60*3),input={listingUrl,address,documents,extra,cacheKey,expires_at:expiry};
     await store.setJSON(jobId,{status:"queued",started_at:new Date().toISOString(),progress:"Analyse en attente",expires_at:expiry});
     await store.setJSON(`input-${jobId}`,input);
-    await store.setJSON(`retry-${jobId}`,input);
     await Promise.allSettled(documentRefs.map(ref=>store.delete(ref)));
 
     const workerUrl=new URL("/api/worker-background",req.url);
     const workerResponse=await fetch(workerUrl,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({jobId})});
     if(!workerResponse.ok){
-      await Promise.allSettled([store.delete(`input-${jobId}`),store.delete(`retry-${jobId}`)]);
+      await store.delete(`input-${jobId}`);
       throw new Error(`Le moteur d'analyse n'a pas pu démarrer (${workerResponse.status}).`);
     }
     return json({jobId,status:"queued"},202);
