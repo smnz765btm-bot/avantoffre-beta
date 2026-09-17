@@ -29,11 +29,12 @@ for(const required of ['id="files"','id="analyze"','id="shareAnalysis"','window.
 if(!h.includes('[re]'))throw new Error('ReVisite branding missing');
 fs.writeFileSync('dist/index.html',h);
 
-// Réduit les appels à l'autocomplétion lorsque l'utilisateur est encore en train de saisir l'adresse.
+// Réduit les appels à l'autocomplétion et autorise la réutilisation des réponses IGN déjà reçues.
 const uiPath='dist/ui-enhancements.js';
 if(fs.existsSync(uiPath)){
   let ui=fs.readFileSync(uiPath,'utf8');
   ui=ui.replace("},250)});input.addEventListener('blur'","},450)});input.addEventListener('blur'");
+  ui=ui.replace("{signal:controller.signal,cache:'no-store'}","{signal:controller.signal,cache:'default'}");
   fs.writeFileSync(uiPath,ui);
 }
 
