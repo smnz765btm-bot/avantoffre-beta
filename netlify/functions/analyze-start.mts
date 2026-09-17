@@ -6,6 +6,13 @@ const limitEnv=(key:string,fallback:number)=>{const n=Number(Netlify.env.get(key
 const hash=async(value:string)=>Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256",new TextEncoder().encode(value)))).map(b=>b.toString(16).padStart(2,"0")).join("").slice(0,24);
 const CACHE_VERSION="revisite-analysis-v3";
 
+function hasUsableOpenAIKey(){
+  const direct=String(Netlify.env.get("OPENAI_API_KEY")||"").trim();
+  if(direct.startsWith("sk-"))return true;
+  const split=["REVISITE_OPENAI_A","REVISITE_OPENAI_B","REVISITE_OPENAI_C1","REVISITE_OPENAI_C2"].map(k=>String(Netlify.env.get(k)||"")).join("").trim();
+  return split.startsWith("sk-");
+}
+
 async function checkRateLimit(store:any,req:Request){
   const ip=(req.headers.get("x-nf-client-connection-ip")||req.headers.get("x-forwarded-for")?.split(",")[0]||"unknown").trim();
   const ipHash=await hash(ip),now=new Date(),day=now.toISOString().slice(0,10),hour=now.toISOString().slice(0,13);
@@ -53,6 +60,10 @@ export default async(req:Request,_context:Context)=>{
     documentRefs=Array.isArray(body?.documentRefs)?body.documentRefs.slice(0,30).map((x:any)=>String(x||"")).filter((x:string)=>x.startsWith(`doc-${jobId}-`)):[];
     const extra=String(body?.extra||"").slice(0,7000);
     if(!listingUrl&&!address&&inlineDocuments.length===0&&documentRefs.length===0)return json({error:"Ajoutez au moins une annonce, une adresse ou un document."},400);
+    if(!hasUsableOpenAIKey()){
+      if(documentRefs.length)await Promise.allSettled(documentRefs.map(ref=>store.delete(ref)));
+      return json({error:"Le moteur ReVisite n'est pas correctement configuré : la clé API OpenAI doit être remplacée."},503);
+    }
 
     const documents=await resolveDocuments(store,jobId,inlineDocuments,documentRefs);
     const cacheKey=await analysisCacheKey(listingUrl,address,extra,documents);
