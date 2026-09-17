@@ -3,6 +3,7 @@
   publish = "dist"
   functions = "netlify/functions"
 
+# Redeploy intentionally after runtime environment updates.
 [[headers]]
   for = "/*"
   [headers.values]
