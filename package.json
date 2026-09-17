@@ -3,10 +3,11 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "build": "node build-revisite.js"
+    "test": "node scripts/reliability-tests.mjs",
+    "build": "npm test && node build-revisite.js"
   },
   "dependencies": {
-    "@netlify/functions": "latest",
-    "@netlify/blobs": "latest"
+    "@netlify/functions": "6.0.0",
+    "@netlify/blobs": "11.0.3"
   }
 }
