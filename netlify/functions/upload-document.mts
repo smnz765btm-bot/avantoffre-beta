@@ -4,6 +4,13 @@ import { jobStore, expiresIn } from "../lib/storage.mjs";
 const json=(body:any,status=200)=>new Response(JSON.stringify(body),{status,headers:{"Content-Type":"application/json; charset=utf-8","Cache-Control":"no-store"}});
 const hash=async(value:string)=>Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256",new TextEncoder().encode(value)))).map(b=>b.toString(16).padStart(2,"0")).join("").slice(0,24);
 
+function hasUsableOpenAIKey(){
+  const direct=String(Netlify.env.get("OPENAI_API_KEY")||"").trim();
+  if(direct.startsWith("sk-"))return true;
+  const split=["REVISITE_OPENAI_A","REVISITE_OPENAI_B","REVISITE_OPENAI_C1","REVISITE_OPENAI_C2"].map(k=>String(Netlify.env.get(k)||"")).join("").trim();
+  return split.startsWith("sk-");
+}
+
 async function allowUpload(store:any,req:Request){
   const ip=(req.headers.get("x-nf-client-connection-ip")||req.headers.get("x-forwarded-for")?.split(",")[0]||"unknown").trim();
   const day=new Date().toISOString().slice(0,10),key=`upload-ip-${day}-${await hash(ip)}`,prev:any=await store.get(key,{type:"json"});
@@ -14,6 +21,7 @@ async function allowUpload(store:any,req:Request){
 
 export default async(req:Request,_context:Context)=>{
   if(req.method!=="POST")return json({error:"Méthode non autorisée."},405);
+  if(!hasUsableOpenAIKey())return json({error:"Le moteur ReVisite n'est pas correctement configuré : la clé API OpenAI doit être remplacée."},503);
   const store=jobStore();
   try{
     if(!await allowUpload(store,req))return json({error:"Limite d'envoi atteinte pour aujourd'hui sur cette bêta."},429);
