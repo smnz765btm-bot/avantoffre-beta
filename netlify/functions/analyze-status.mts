@@ -46,7 +46,8 @@ export default async(req:Request,_context:Context)=>{
         await s.delete(`input-${jobId}`);
       }
       await Promise.allSettled([s.delete(`retry-${jobId}`),s.delete(jobId)]);
-      return json({status:"error",error:"L'analyse n'a pas pu être finalisée. Relancez-la : vos documents peuvent rester sélectionnés."},500);
+      const diagnostic=jobId.startsWith("smoke_")?message.slice(0,500):undefined;
+      return json({status:"error",error:"L'analyse n'a pas pu être finalisée. Relancez-la : vos documents peuvent rester sélectionnés.",...(diagnostic?{diagnostic}: {})},500);
     }
     return json(job);
   }catch(err){console.error("ReVisite status error",err);return json({error:"Impossible de lire l'état de l'analyse."},500)}
