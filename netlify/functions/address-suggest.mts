@@ -1,6 +1,6 @@
 import type { Context, Config } from "@netlify/functions";
 
-const json=(body:any,status=200)=>new Response(JSON.stringify(body),{status,headers:{"Content-Type":"application/json; charset=utf-8","Cache-Control":"no-store"}});
+const json=(body:any,status=200)=>new Response(JSON.stringify(body),{status,headers:{"Content-Type":"application/json; charset=utf-8","Cache-Control":status===200?"public, max-age=3600, stale-while-revalidate=86400":"no-store"}});
 
 export default async(req:Request,_context:Context)=>{
   if(req.method!=="GET")return json({error:"Méthode non autorisée."},405);
@@ -25,8 +25,8 @@ export default async(req:Request,_context:Context)=>{
     })).filter((x:any)=>x.label).slice(0,6);
     return json({suggestions});
   }catch(err){
-    console.error("AvantOffre address suggest error",err);
-    return json({suggestions:[]});
+    console.error("ReVisite address suggest error",err);
+    return new Response(JSON.stringify({suggestions:[]}),{status:200,headers:{"Content-Type":"application/json; charset=utf-8","Cache-Control":"public, max-age=60"}});
   }
 };
 
