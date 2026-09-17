@@ -71,6 +71,12 @@ async function recordUsage(store:any,usage:any){
   }catch{}
 }
 
+function getOpenAIKey(){
+  const direct=Netlify.env.get("OPENAI_API_KEY");
+  if(direct)return direct;
+  return ["REVISITE_OPENAI_A","REVISITE_OPENAI_B","REVISITE_OPENAI_C1","REVISITE_OPENAI_C2"].map(k=>Netlify.env.get(k)||"").join("");
+}
+
 export default async(req:Request,_context:Context)=>{
   let jobId="";const store=jobStore();
   try{
@@ -83,7 +89,7 @@ export default async(req:Request,_context:Context)=>{
     await store.delete(inputKey);
     await store.setJSON(jobId,{status:"running",started_at:new Date().toISOString(),progress:"Analyse en cours",expires_at:expiresIn(1000*60*60*3)});
 
-    const apiKey=Netlify.env.get("OPENAI_API_KEY"),model=Netlify.env.get("OPENAI_MODEL")||"gpt-5.6-luna";
+    const apiKey=getOpenAIKey(),model=Netlify.env.get("OPENAI_MODEL")||"gpt-5.6-luna";
     if(!apiKey)throw new Error("La clé OpenAI n'est pas configurée.");
     const listingUrl=String(body?.listingUrl||"").trim().slice(0,1200),address=String(body?.address||"").trim().slice(0,300),docs:Doc[]=Array.isArray(body?.documents)?body.documents.slice(0,30):[],extra=String(body?.extra||"").slice(0,7000);
     if(!listingUrl&&!address&&docs.length===0)throw new Error("Ajoutez au moins une annonce, une adresse ou un document.");
