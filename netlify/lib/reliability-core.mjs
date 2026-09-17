@@ -1,0 +1,183 @@
+export const clamp=(n,min=0,max=100)=>Math.max(min,Math.min(max,Number(n)||0));
+export const num=v=>Number.isFinite(Number(v))?Number(v):null;
+const arr=v=>Array.isArray(v)?v:[];
+const obj=v=>v&&typeof v==='object'&&!Array.isArray(v)?v:{};
+const text=v=>typeof v==='string'?v:'';
+
+const CATEGORY_WEIGHTS={ag:25,charges:15,accounts:10,diagnostics:15,pppt:15,reglement:10,synthese:5,entretien:5};
+const CATEGORY_PATTERNS={
+  ag:/assembl[ée]e\s+g[ée]n[ée]rale|proc[èe]s[- ]verbal.{0,80}assembl|\bago\b|\bag\s+(?:du|des|ordinaire|extraordinaire)\b/i,
+  charges:/d[ée]compte\s+de\s+charges|r[ée]partition.{0,40}charges|appel\s+de\s+fonds|charges\s+du\s+lot|total\s+des\s+charges/i,
+  accounts:/approbation\s+des\s+comptes|budget\s+pr[ée]visionnel|annexe\s+[1-5]|situation\s+comptable|cr[ée]ances|dettes\s+fournisseurs/i,
+  diagnostics:/diagnostic\s+de\s+performance\s+[ée]nerg[ée]tique|\bdpe\b|installation\s+int[ée]rieure\s+d['’]?[ée]lectricit[ée]|amiante|termites|[ée]tat\s+des\s+risques/i,
+  pppt:/\bpppt\b|projet\s+de\s+plan\s+pluriannuel|plan\s+pluriannuel\s+de\s+travaux|\bppt\b/i,
+  reglement:/r[èe]glement\s+de\s+copropri[ée]t[ée]|[ée]tat\s+descriptif\s+de\s+division|\bedd\b/i,
+  synthese:/fiche\s+synth[ée]tique|synth[èe]se\s+de\s+la\s+copropri[ée]t[ée]/i,
+  entretien:/carnet\s+d['’]entretien|contrat\s+d['’]entretien|maintenance\s+ascenseur|entretien\s+toiture/i,
+};
+
+function docSignal(doc){
+  const raw=text(doc?.text);
+  const name=text(doc?.name);
+  const sample=(name+'\n'+raw.slice(0,50000)).replace(/\s+/g,' ');
+  const quality=String(doc?.quality||'').toLowerCase();
+  const weakPages=Math.max(0,Number(doc?.weakPages)||0);
+  const pages=Math.max(0,Number(doc?.pages)||0);
+  const chars=raw.trim().length;
+  let readability=quality==='failed'?0:quality==='partial'?0.68:chars<80?0:1;
+  if(pages>0&&weakPages>0)readability*=Math.max(.55,1-(weakPages/pages)*.75);
+  const categories={};
+  for(const [k,re] of Object.entries(CATEGORY_PATTERNS))categories[k]=re.test(sample);
+  return{readability,chars,pages,weakPages,categories};
+}
+
+export function documentCoverage(docs=[]){
+  if(!Array.isArray(docs)||docs.length===0)return{score:0,readability:0,categories:{},readableDocs:0,totalDocs:0};
+  const signals=docs.map(docSignal);
+  const categories={};
+  for(const k of Object.keys(CATEGORY_WEIGHTS))categories[k]=signals.some(s=>s.readability>0&&s.categories[k]);
+  const categoryScore=Object.entries(CATEGORY_WEIGHTS).reduce((sum,[k,w])=>sum+(categories[k]?w:0),0);
+  const readable=signals.filter(s=>s.readability>0);
+  const readability=readable.length?readable.reduce((s,x)=>s+x.readability,0)/docs.length:0;
+  const usefulChars=signals.reduce((s,x)=>s+Math.min(x.chars,80000)*x.readability,0);
+  const volumeFactor=clamp(usefulChars/120000,0.35,1);
+  const score=Math.round(clamp(categoryScore*readability*volumeFactor));
+  return{score,readability:Math.round(readability*100),categories,readableDocs:readable.length,totalDocs:docs.length};
+}
+
+function splitPages(raw){
+  const matches=[...raw.matchAll(/(?=\[PAGE\s+\d+\s*\|)/gi)].map(m=>m.index??0);
+  if(matches.length<2)return[];
+  const out=[];
+  for(let i=0;i<matches.length;i++)out.push(raw.slice(matches[i],matches[i+1]??raw.length));
+  return out;
+}
+
+function balancedExcerpt(raw,maxChars){
+  if(raw.length<=maxChars)return raw;
+  const pages=splitPages(raw);
+  if(pages.length>1){
+    const header='[EXTRACTION ÉCHANTILLONNÉE SUR TOUT LE DOCUMENT — certaines portions longues ont été condensées]\n';
+    const budget=Math.max(1000,maxChars-header.length);
+    const per=Math.max(450,Math.floor(budget/pages.length));
+    const selected=pages.map(p=>p.length<=per?p:p.slice(0,Math.floor(per*.72))+'\n[…portion condensée…]\n'+p.slice(-Math.floor(per*.28)));
+    let joined=header+selected.join('\n');
+    if(joined.length>maxChars)joined=joined.slice(0,maxChars);
+    return joined;
+  }
+  const head=Math.floor(maxChars*.55),mid=Math.floor(maxChars*.20),tail=maxChars-head-mid-90;
+  const midStart=Math.max(head,Math.floor(raw.length/2-mid/2));
+  return raw.slice(0,head)+'\n[…contenu intermédiaire condensé…]\n'+raw.slice(midStart,midStart+mid)+'\n[…fin condensée…]\n'+raw.slice(-Math.max(0,tail));
+}
+
+export function prepareDocs(docs=[]){
+  const MAX_TOTAL=900000,MAX_DOC=80000;
+  const list=Array.isArray(docs)?docs.slice(0,30):[];
+  if(!list.length)return[];
+  const fairCap=Math.max(12000,Math.floor(MAX_TOTAL/list.length));
+  const cap=Math.min(MAX_DOC,fairCap);
+  return list.map(d=>{
+    const raw=text(d?.text);
+    const prepared=balancedExcerpt(raw,cap);
+    return{
+      name:text(d?.name)||'document',text:prepared,pages:num(d?.pages),quality:text(d?.quality)||undefined,
+      weakPages:num(d?.weakPages),ocrPages:num(d?.ocrPages),chars_source:raw.length,chars_transmitted:prepared.length,
+      truncated:prepared.length<raw.length
+    };
+  });
+}
+
+export function normalizeAnalysis(input){
+  const a=obj(input);
+  a.property=obj(a.property);a.market=obj(a.market);a.copro_metrics=obj(a.copro_metrics);a.copro=obj(a.copro);a.works=obj(a.works);
+  a.buyer_blocks=obj(a.buyer_blocks);a.documents=obj(a.documents);a.risk_flags=obj(a.risk_flags);a.executive_summary=obj(a.executive_summary);
+  a.negotiation=obj(a.negotiation);a.verdict=obj(a.verdict);
+  a.buyer_blocks.diagnostic_works=obj(a.buyer_blocks.diagnostic_works);
+  a.buyer_blocks.future_copro_costs=obj(a.buyer_blocks.future_copro_costs);
+  a.buyer_blocks.real_acquisition_budget=obj(a.buyer_blocks.real_acquisition_budget);
+  a.buyer_blocks.before_offer_checks=obj(a.buyer_blocks.before_offer_checks);
+  const arrayPaths=[
+    [a.property,'assets'],[a.property,'weaknesses'],[a.property,'diagnostics'],[a.market,'comparables'],
+    [a.copro,'recurring_topics'],[a.copro,'litigation'],[a.copro,'strengths'],[a.copro,'weaknesses'],
+    [a.works,'voted'],[a.works,'discussed'],[a.works,'rejected_or_postponed'],[a.works,'recommended_pppt'],[a.works,'recent_completed'],[a.works,'asl'],
+    [a.buyer_blocks.diagnostic_works,'items'],[a.buyer_blocks.future_copro_costs,'items'],[a.buyer_blocks.future_copro_costs,'unknown_exposure'],
+    [a.buyer_blocks.real_acquisition_budget,'unknown_costs'],[a.buyer_blocks.before_offer_checks,'checks'],[a.buyer_blocks.before_offer_checks,'inconsistencies'],[a.buyer_blocks.before_offer_checks,'negotiation_impacts'],
+    [a.documents,'received'],[a.documents,'missing_or_to_obtain'],[a.documents,'quality_notes'],
+    [a.executive_summary,'top_strengths'],[a.executive_summary,'top_risks'],[a.executive_summary,'what_changes_the_decision'],
+    [a.negotiation,'arguments'],[a.negotiation,'conditions_before_offer'],[a,'evidence'],[a,'questions_before_offer'],[a.verdict,'go_if'],[a.verdict,'stop_if']
+  ];
+  for(const [o,k] of arrayPaths)o[k]=arr(o[k]);
+  a.executive_summary.top_strengths=a.executive_summary.top_strengths.slice(0,3);
+  a.executive_summary.top_risks=a.executive_summary.top_risks.slice(0,3);
+  a.executive_summary.what_changes_the_decision=a.executive_summary.what_changes_the_decision.slice(0,4);
+  a.documents.missing_or_to_obtain=a.documents.missing_or_to_obtain.slice(0,4);
+  a.questions_before_offer=a.questions_before_offer.slice(0,4);
+  a.evidence=a.evidence.slice(0,30).map(e=>{const x=obj(e);const status=['FACT','INFERENCE','UNKNOWN'].includes(String(x.status))?String(x.status):'UNKNOWN';return{...x,status:status==='FACT'&&!text(x.source).trim()?'UNKNOWN':status};});
+  for(const key of Object.keys(a.risk_flags))a.risk_flags[key]=a.risk_flags[key]===true;
+  return a;
+}
+
+function median(xs){const a=xs.filter(Number.isFinite).sort((x,y)=>x-y);if(!a.length)return null;const m=Math.floor(a.length/2);return a.length%2?a[m]:(a[m-1]+a[m])/2;}
+function percentile(xs,p){const a=xs.filter(Number.isFinite).sort((x,y)=>x-y);if(!a.length)return null;const i=(a.length-1)*p,lo=Math.floor(i),hi=Math.ceil(i);return a[lo]+(a[hi]-a[lo])*(i-lo);}
+
+function inferKind(property={}){const s=(text(property.title)+' '+text(property.property_analysis)+' '+text(property.floor)).toLowerCase();if(/maison|villa|pavillon/.test(s))return'house';if(/appartement|studio|\bt[1-9]\b|étage|etage/.test(s))return'apartment';return null;}
+
+export function selectOfficialComparables(candidates=[],property={}){
+  const surface=num(property.surface_m2),kind=inferKind(property);
+  let list=arr(candidates).map(c=>{
+    const price=num(c.valeurfonc??c.price),surf=num(c.sbati??c.surface),type=String(c.libtypbien??c.type??''),code=String(c.codtypbien??'');
+    const ckind=/APPART/i.test(type)||code==='121'?'apartment':/MAISON/i.test(type)||code==='111'?'house':null;
+    const date=String(c.datemut??c.date??'');
+    const pm=price&&surf?price/surf:null;
+    return{raw:c,price,surface:surf,type,kind:ckind,date,price_m2:pm};
+  }).filter(x=>x.price&&x.surface&&x.surface>10&&x.price_m2&&x.price_m2>500&&x.price_m2<15000&&x.price<5000000);
+  if(kind)list=list.filter(x=>!x.kind||x.kind===kind);
+  if(surface){const tight=list.filter(x=>Math.abs(x.surface-surface)/surface<=.30);if(tight.length>=3)list=tight;else{const wide=list.filter(x=>Math.abs(x.surface-surface)/surface<=.50);if(wide.length>=2)list=wide;}}
+  list.sort((a,b)=>{
+    const sd=surface?(Math.abs(a.surface-surface)-Math.abs(b.surface-surface)):0;
+    if(sd!==0)return sd;
+    return String(b.date).localeCompare(String(a.date));
+  });
+  return list.slice(0,5).map(x=>({
+    label:`${x.type||'Vente'} · ${Math.round(x.surface)} m²`,date:x.date,price:Math.round(x.price),surface:Math.round(x.surface*10)/10,
+    price_m2:Math.round(x.price_m2),type:'DVF',distance_note:'secteur proche (emprise env. 500 m)',source:'Cerema — DVF+ open-data'
+  }));
+}
+
+export function applyOfficialMarketData(analysis,candidates=[]){
+  const a=normalizeAnalysis(analysis);const comps=selectOfficialComparables(candidates,a.property);
+  if(comps.length){
+    a.market.comparables=comps;
+    a.market.confidence=comps.length>=3?'bonne':'moyenne';
+    const surface=num(a.property.surface_m2),pms=comps.map(c=>num(c.price_m2)).filter(Number.isFinite);
+    if(surface&&pms.length>=2){
+      const q25=percentile(pms,.25),q75=percentile(pms,.75),med=median(pms);
+      const low=Math.round(surface*(q25??med)*.95/1000)*1000,high=Math.round(surface*(q75??med)*1.05/1000)*1000;
+      a.market.dvf_reference={low,high,median_price_m2:Math.round(med),count:comps.length,source:'Cerema — DVF+ open-data'};
+      const aiLow=num(a.market.estimate_low),aiHigh=num(a.market.estimate_high);
+      const grosslyOutside=aiLow&&aiHigh&&(aiHigh<low*.72||aiLow>high*1.28||aiLow>aiHigh);
+      if(!aiLow||!aiHigh||grosslyOutside){a.market.estimate_low=low;a.market.estimate_high=high;a.market.positioning=[text(a.market.positioning),'Fourchette recalée sur les ventes DVF+ disponibles dans le secteur.'].filter(Boolean).join(' ');}
+    }
+  }else{
+    a.market.comparables=arr(a.market.comparables).filter(c=>String(c?.type||'').toLowerCase()!=='dvf');
+    a.market.confidence='faible';
+  }
+  return a;
+}
+
+export function deterministicScores(a,docs=[],marketMeta={}){
+  const r=obj(a?.risk_flags);let property=82;
+  if(r.electrical_anomalies)property-=5;if(r.major_property_defect)property-=12;if(r.no_elevator_high_floor)property-=6;if(r.poor_dpe)property-=8;if(r.sold_occupied)property-=2;if(r.no_parking_when_expected)property-=3;if(r.strong_property_assets)property+=4;property=clamp(property);
+  let finance=40;const ar=num(a?.copro_metrics?.collective_arrears_ratio_pct),sr=num(a?.copro_metrics?.supplier_debt_ratio_pct),fr=num(a?.copro_metrics?.works_fund_ratio_pct);
+  if(ar!==null)finance-=ar>25?18:ar>15?12:ar>8?6:0;else finance-=5;if(sr!==null)finance-=sr>15?7:sr>8?4:0;if(fr!==null)finance+=fr>15?3:fr<3?-4:0;finance=clamp(finance,0,40);
+  let works=25;if(r.voted_major_works)works-=10;if(r.pppt_significant_medium_term)works-=6;if(r.recurring_major_technical_issue)works-=5;if(r.recent_major_works_completed)works+=2;works=clamp(works,0,25);
+  let governance=20;if(r.litigation)governance-=5;if(r.governance_issue)governance-=6;if(r.asl_active)governance-=2;governance=clamp(governance,0,20);
+  let technical=15;if(r.poor_maintenance)technical-=6;if(r.recurring_major_technical_issue)technical-=4;if(r.recent_major_works_completed)technical+=2;technical=clamp(technical,0,15);
+  const copro=Math.round(finance+works+governance+technical),coverage=documentCoverage(docs),documentation=coverage.score;
+  let market=55;const ask=num(a?.property?.asking_price),lo=num(a?.market?.estimate_low),hi=num(a?.market?.estimate_high);
+  if(ask&&lo&&hi&&lo<=hi){if(ask>=lo&&ask<=hi)market=84;else if(ask<lo)market=88;else market=clamp(Math.round(84-((ask-hi)/hi*100)*2.5),35,84)}
+  const officialCount=Math.max(0,Number(marketMeta?.officialCount)||0),marketReliability=officialCount>=3?90:officialCount>=1?70:35;
+  const confidence=Math.round(documentation*.75+marketReliability*.25);
+  const overall=docs.length>0&&documentation>=50?Math.round(property*.30+copro*.40+market*.30):null;
+  return{property,copro,market,documentation,confidence,overall,axes:{finance,works,governance,technical},coverage};
+}
