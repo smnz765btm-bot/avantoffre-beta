@@ -22,14 +22,14 @@ export default async(req:Request,_context:Context)=>{
     const index=Number(body?.index),name=String(body?.name||"document").slice(0,240),text=String(body?.text||"");
     const pages=Number.isFinite(Number(body?.pages))?Number(body.pages):null;
     const quality=["ok","partial","failed"].includes(String(body?.quality))?String(body.quality):text.trim().length>=80?"ok":"failed";
-    const ocrPages=Math.max(0,Number(body?.ocrPages)||0),weakPages=Math.max(0,Number(body?.weakPages)||0),pageStats=Array.isArray(body?.pageStats)?body.pageStats.slice(0,250):[];
+    const ocrPages=Math.max(0,Number(body?.ocrPages)||0),weakPages=Math.max(0,Number(body?.weakPages)||0);
     if(!jobId||!Number.isInteger(index)||index<0||index>29)return json({error:"Référence de document invalide."},400);
     if(text.length>500000)return json({error:"Document trop volumineux après extraction."},413);
     if(quality==="failed"||text.trim().length<80)return json({error:"Lecture insuffisante après seconde lecture OCR. Le document n'est pas assez exploitable pour une analyse fiable.",quality,ocrPages,weakPages,chars:text.length},422);
-    const key=`doc-${jobId}-${index}`;
-    await store.setJSON(key,{name,text,pages,chars:text.length,quality,ocrPages,weakPages,pageStats,created_at:new Date().toISOString(),expires_at:expiresIn(1000*60*60*3)});
-    if(quality==="partial")return json({ref:key,index,name,chars:79,actualChars:text.length,quality,ocrPages,weakPages,error:`Lecture partielle après OCR : ${weakPages} page(s) restent difficiles à exploiter.`});
-    return json({ref:key,index,name,chars:text.length,actualChars:text.length,quality,ocrPages,weakPages});
+    const contentHash=await hash(`${name}\n${text}`),key=`doc-${jobId}-${index}`;
+    await store.setJSON(key,{name,text,pages,chars:text.length,quality,ocrPages,weakPages,contentHash,created_at:new Date().toISOString(),expires_at:expiresIn(1000*60*60*3)});
+    if(quality==="partial")return json({ref:key,index,name,chars:79,actualChars:text.length,quality,ocrPages,weakPages,contentHash,error:`Lecture partielle après OCR : ${weakPages} page(s) restent difficiles à exploiter.`});
+    return json({ref:key,index,name,chars:text.length,actualChars:text.length,quality,ocrPages,weakPages,contentHash});
   }catch(err:any){
     console.error("ReVisite upload document error",err);
     return json({error:err?.message||"Impossible d'envoyer le document."},500);
