@@ -1,10 +1,11 @@
 import type { Context, Config } from "@netlify/functions";
-import { jobStore, expiresIn } from "../lib/storage.mjs";
+import { jobStore, expiresIn, isExpired } from "../lib/storage.mjs";
 import { prepareDocs, normalizeAnalysis, applyOfficialMarketData, deterministicScores, num } from "../lib/reliability-core.mjs";
 
 type Doc={name:string;text:string;pages?:number;chars?:number;quality?:string;ocrPages?:number;weakPages?:number;pageStats?:any[]};
 
 const jsonText=(value:any)=>JSON.stringify(value);
+const digest=async(value:string)=>Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256",new TextEncoder().encode(value)))).map(b=>b.toString(16).padStart(2,"0")).join("").slice(0,24);
 const safeJsonFromText=(value:string)=>{
   const cleaned=String(value||"").trim().replace(/^```json\s*/i,"").replace(/```$/i,"").trim();
   try{return JSON.parse(cleaned)}catch{}
@@ -17,21 +18,31 @@ async function fetchJson(url:string,timeoutMs=9000){
   const controller=new AbortController();
   const timer=setTimeout(()=>controller.abort(),timeoutMs);
   try{
-    const rsp=await fetch(url,{headers:{Accept:"application/json","User-Agent":"ReVisite/0.2"},signal:controller.signal});
+    const rsp=await fetch(url,{headers:{Accept:"application/json","User-Agent":"ReVisite/0.3"},signal:controller.signal});
     if(!rsp.ok)throw new Error(`HTTP ${rsp.status}`);
     return await rsp.json();
   }finally{clearTimeout(timer)}
 }
 
-async function fetchDvfCandidates(address:string){
-  if(!address)return{status:"not_requested",candidates:[],source:""};
+const slimDvfRow=(x:any)=>({
+  valeurfonc:x?.valeurfonc??null,sbati:x?.sbati??null,libtypbien:x?.libtypbien??null,codtypbien:x?.codtypbien??null,datemut:x?.datemut??null
+});
+
+async function fetchDvfCandidates(address:string,store:any){
+  if(!address)return{status:"not_requested",candidates:[],source:"",cache_hit:false};
+  const normalized=address.toLowerCase().replace(/\s+/g," ").trim();
+  const cacheKey=`dvf-cache-${await digest(normalized)}`;
+  try{
+    const cached:any=await store.get(cacheKey,{type:"json"});
+    if(cached&&!isExpired(cached)&&Array.isArray(cached.candidates))return{...cached,cache_hit:true};
+  }catch{}
   try{
     const geo=new URL("https://data.geopf.fr/geocodage/completion/");
     geo.searchParams.set("text",address);geo.searchParams.set("type","StreetAddress");geo.searchParams.set("maximumResponses","1");
     const g:any=await fetchJson(geo.toString(),7000);
     const first=Array.isArray(g?.results)?g.results[0]:null;
     const lon=num(first?.x),lat=num(first?.y);
-    if(lon===null||lat===null)return{status:"geocode_unavailable",candidates:[],source:""};
+    if(lon===null||lat===null)return{status:"geocode_unavailable",candidates:[],source:"",cache_hit:false};
     const latDelta=.0052,lonDelta=.0052/Math.max(.45,Math.cos(lat*Math.PI/180));
     const bbox=[lon-lonDelta,lat-latDelta,lon+lonDelta,lat+latDelta].map(v=>v.toFixed(6)).join(",");
     const year=new Date().getUTCFullYear()-3;
@@ -39,18 +50,22 @@ async function fetchDvfCandidates(address:string){
     for(const base of bases){
       try{
         const u=new URL("/dvf_opendata/mutations/",base);
-        u.searchParams.set("in_bbox",bbox);u.searchParams.set("anneemut_min",String(year));u.searchParams.set("codtypbien","111,121");u.searchParams.set("page_size","250");u.searchParams.set("ordering","-datemut");
+        u.searchParams.set("in_bbox",bbox);u.searchParams.set("anneemut_min",String(year));u.searchParams.set("codtypbien","111,121");u.searchParams.set("page_size","120");u.searchParams.set("ordering","-datemut");
         const d:any=await fetchJson(u.toString(),10000);
-        const rows=Array.isArray(d?.results)?d.results:Array.isArray(d)?d:[];
-        if(rows.length)return{status:"ok",candidates:rows.slice(0,250),source:base,lat,lon};
+        const rows=(Array.isArray(d?.results)?d.results:Array.isArray(d)?d:[]).slice(0,120).map(slimDvfRow);
+        if(rows.length){
+          const result:any={status:"ok",candidates:rows,source:base,lat,lon,cache_hit:false,expires_at:expiresIn(1000*60*60*24)};
+          try{await store.setJSON(cacheKey,result)}catch{}
+          return result;
+        }
       }catch{}
     }
-    return{status:"unavailable",candidates:[],source:"",lat,lon};
-  }catch{return{status:"unavailable",candidates:[],source:""}}
+    return{status:"unavailable",candidates:[],source:"",lat,lon,cache_hit:false};
+  }catch{return{status:"unavailable",candidates:[],source:"",cache_hit:false}}
 }
 
 function dvfPromptRows(rows:any[]){
-  return rows.slice(0,60).map((x:any)=>{
+  return rows.slice(0,24).map((x:any)=>{
     const p=num(x?.valeurfonc),s=num(x?.sbati),pm=p&&s?Math.round(p/s):null;
     return [x?.datemut||"?",x?.libtypbien||x?.codtypbien||"bien",p?`${Math.round(p)}€`:"prix ?",s?`${s}m²`:"surface ?",pm?`${pm}€/m²`:""].filter(Boolean).join(" | ");
   }).join("\n");
@@ -91,10 +106,10 @@ export default async(req:Request,_context:Context)=>{
 
     const apiKey=getOpenAIKey(),model=Netlify.env.get("OPENAI_MODEL")||"gpt-5.6-luna";
     if(!apiKey)throw new Error("La clé OpenAI n'est pas configurée.");
-    const listingUrl=String(body?.listingUrl||"").trim().slice(0,1200),address=String(body?.address||"").trim().slice(0,300),docs:Doc[]=Array.isArray(body?.documents)?body.documents.slice(0,30):[],extra=String(body?.extra||"").slice(0,7000);
+    const listingUrl=String(body?.listingUrl||"").trim().slice(0,1200),address=String(body?.address||"").trim().slice(0,300),docs:Doc[]=Array.isArray(body?.documents)?body.documents.slice(0,30):[],extra=String(body?.extra||"").slice(0,7000),cacheKey=String(body?.cacheKey||"").slice(0,100);
     if(!listingUrl&&!address&&docs.length===0)throw new Error("Ajoutez au moins une annonce, une adresse ou un document.");
 
-    const prepared=prepareDocs(docs),dvf:any=await fetchDvfCandidates(address);
+    const prepared=prepareDocs(docs),preparedChars=prepared.reduce((s:number,d:any)=>s+(Number(d.chars_transmitted)||0),0),dvf:any=await fetchDvfCandidates(address,store);
     const officialDvf=dvf.status==="ok"?dvfPromptRows(dvf.candidates):"Aucune donnée DVF+ officielle n'a pu être récupérée automatiquement pour cette analyse.";
 
     const system=`Tu es le moteur ReVisite, outil français d'aide à la décision avant une offre immobilière. Tu dois être utile, simple et surtout factuel.
@@ -141,10 +156,11 @@ Retourne uniquement un objet JSON valide correspondant aux rubriques demandées.
 
     const user=`ADRESSE DU BIEN:\n${address||"non fournie"}\n\nURL ANNONCE:\n${listingUrl||"non fournie"}\n\nINFORMATIONS COMPLÉMENTAIRES:\n${extra||"aucune"}\n\nVENTES DVF+ OFFICIELLES DU SECTEUR (CANDIDATS BRUTS À FILTRER SELON LE BIEN):\n${officialDvf}\n\nSTRUCTURE JSON ATTENDUE:\n${jsonText(schemaHint)}\n\nDOCUMENTS EXTRAITS:\n${prepared.map((d:any,i:number)=>`\n--- DOCUMENT ${i+1}: ${d.name} | pages=${d.pages??"?"} | lecture=${d.quality||"non qualifiée"} | caractères transmis=${d.chars_transmitted}/${d.chars_source}${d.truncated?" | ÉCHANTILLONNÉ":""} ---\n${d.text}`).join("\n")}`;
 
+    const reasoningEffort=preparedChars>180000?"medium":"low";
     const payload:any={
       model,input:[{role:"system",content:[{type:"input_text",text:system}]},{role:"user",content:[{type:"input_text",text:user}]}],
-      tools:listingUrl?[{type:"web_search"}]:[],reasoning:{effort:"medium"},max_output_tokens:10000,
-      text:{format:{type:"json_object"},verbosity:"low"},store:false,prompt_cache_key:"revisite-analysis-v2"
+      tools:listingUrl?[{type:"web_search"}]:[],reasoning:{effort:reasoningEffort},max_output_tokens:7000,
+      text:{format:{type:"json_object"},verbosity:"low"},store:false,prompt_cache_key:"revisite-analysis-v3"
     };
     const rsp=await fetch("https://api.openai.com/v1/responses",{method:"POST",headers:{Authorization:`Bearer ${apiKey}`,"Content-Type":"application/json"},body:JSON.stringify(payload)});
     const raw=await rsp.text();let data:any=null;try{data=raw?JSON.parse(raw):null}catch{}
@@ -162,12 +178,15 @@ Retourne uniquement un objet JSON valide correspondant aux rubriques demandées.
     const scores=deterministicScores(analysis,docs,{officialCount});
     await recordUsage(store,data?.usage);
 
-    await store.setJSON(jobId,{status:"done",result:{analysis,scores,meta:{
+    const result={analysis,scores,meta:{
       model,document_count:docs.length,beta:true,generated_at:new Date().toISOString(),
-      input_chars:prepared.reduce((s:number,d:any)=>s+(Number(d.chars_transmitted)||0),0),
-      dvf_status:dvf.status,dvf_source:dvf.source||null,dvf_candidate_count:Array.isArray(dvf.candidates)?dvf.candidates.length:0,
-      usage:data?.usage||null,score_withheld:scores.overall===null
-    }},expires_at:expiresIn(1000*60*60*3)});
+      input_chars:preparedChars,dvf_status:dvf.status,dvf_source:dvf.source||null,dvf_candidate_count:Array.isArray(dvf.candidates)?dvf.candidates.length:0,
+      dvf_cache_hit:Boolean(dvf.cache_hit),usage:data?.usage||null,score_withheld:scores.overall===null,cache_hit:false
+    }};
+    await store.setJSON(jobId,{status:"done",result,expires_at:expiresIn(1000*60*60*3)});
+    if(cacheKey.startsWith("analysis-cache-")){
+      try{await store.setJSON(cacheKey,{result,expires_at:expiresIn(1000*60*60*24)})}catch{}
+    }
   }catch(err:any){
     console.error("ReVisite background error",err);
     if(jobId)await store.setJSON(jobId,{status:"error",error:err?.message||"Erreur interne.",expires_at:expiresIn(1000*60*60)});
