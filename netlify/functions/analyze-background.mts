@@ -1,21 +1,171 @@
 import type { Context, Config } from "@netlify/functions";
-import { getStore } from "@netlify/blobs";
-type Doc={name:string;text:string;pages?:number;chars?:number};
-function jobStore(){return getStore("avantoffre-jobs",{consistency:"strong"})}const clamp=(n:number,min=0,max=100)=>Math.max(min,Math.min(max,n));const num=(v:any)=>Number.isFinite(Number(v))?Number(v):null;
-function deterministicScores(a:any,docs:Doc[]){const r=a?.risk_flags||{};let property=82;if(r.electrical_anomalies)property-=5;if(r.major_property_defect)property-=12;if(r.no_elevator_high_floor)property-=6;if(r.poor_dpe)property-=8;if(r.sold_occupied)property-=2;if(r.no_parking_when_expected)property-=3;if(r.strong_property_assets)property+=4;property=clamp(property);let finance=40;const ar=num(a?.copro_metrics?.collective_arrears_ratio_pct),sr=num(a?.copro_metrics?.supplier_debt_ratio_pct),fr=num(a?.copro_metrics?.works_fund_ratio_pct);if(ar!==null)finance-=ar>25?18:ar>15?12:ar>8?6:0;else finance-=5;if(sr!==null)finance-=sr>15?7:sr>8?4:0;if(fr!==null)finance+=fr>15?3:fr<3?-4:0;finance=clamp(finance,0,40);let works=25;if(r.voted_major_works)works-=10;if(r.pppt_significant_medium_term)works-=6;if(r.recurring_major_technical_issue)works-=5;if(r.recent_major_works_completed)works+=2;works=clamp(works,0,25);let governance=20;if(r.litigation)governance-=5;if(r.governance_issue)governance-=6;if(r.asl_active)governance-=2;governance=clamp(governance,0,20);let technical=15;if(r.poor_maintenance)technical-=6;if(r.recurring_major_technical_issue)technical-=4;if(r.recent_major_works_completed)technical+=2;technical=clamp(technical,0,15);const copro=Math.round(finance+works+governance+technical),names=docs.map(d=>d.name.toLowerCase()).join(" ");const present={ag:/(?:pv|ag|assembl)/.test(names),synth:/fiche.*synth|synth[eé]tique/.test(names),charges:/charge|decompte|appel|pré.?etat|pre.?etat/.test(names),accounts:/budget|compte|annexe/.test(names),dpe:/dpe|diag|dia-/.test(names),pppt:/pppt|ppt/.test(names),entretien:/entretien/.test(names),reglement:/reglement|règlement|edd/.test(names),collective:/collectif|dtg/.test(names)};let documentation=0;if(present.ag)documentation+=25;if(present.synth)documentation+=15;if(present.charges)documentation+=10;if(present.accounts)documentation+=10;if(present.pppt)documentation+=15;if(present.dpe)documentation+=10;if(present.entretien)documentation+=5;if(present.reglement)documentation+=5;if(present.collective)documentation+=5;documentation=clamp(documentation);let market=70;const ask=num(a?.property?.asking_price),lo=num(a?.market?.estimate_low),hi=num(a?.market?.estimate_high);if(ask&&lo&&hi){if(ask<=hi&&ask>=lo)market=84;else if(ask<lo)market=90;else market=clamp(Math.round(84-((ask-hi)/hi*100)*3),35,84)}else market=60;const confidence=documentation>=85?90:documentation>=70?80:documentation>=55?68:documentation>=40?55:40,overall=documentation>=60?Math.round(property*.30+copro*.40+market*.30):null;return{property,copro,market,documentation,confidence,overall,axes:{finance,works,governance,technical}}}
-function safeJsonFromText(text:string){const cleaned=text.trim().replace(/^```json\s*/i,"").replace(/```$/i,"").trim();try{return JSON.parse(cleaned)}catch{}const s=cleaned.indexOf("{"),e=cleaned.lastIndexOf("}");if(s>=0&&e>s)return JSON.parse(cleaned.slice(s,e+1));throw new Error("Réponse IA non structurée")}
-function prepareDocs(docs:Doc[]){const MAX_TOTAL=1800000,MAX_DOC=110000;let left=MAX_TOTAL;return docs.map(d=>{const raw=String(d.text||"");const allowed=Math.max(0,Math.min(MAX_DOC,left));const text=allowed>0?raw.slice(0,allowed):"[CONTENU NON TRANSMIS — LIMITE GLOBALE ATTEINTE]";left-=Math.min(raw.length,allowed);return{name:String(d.name||"document"),text,pages:d.pages||null,chars_source:raw.length,chars_transmitted:text.length,truncated:raw.length>allowed}})}
-export default async(req:Request,_context:Context)=>{let jobId="";const store=jobStore();try{const trigger:any=await req.json();jobId=String(trigger?.jobId||"").replace(/[^a-zA-Z0-9_-]/g,"").slice(0,80);if(!jobId)return;const inputKey=`input-${jobId}`;const body:any=await store.get(inputKey,{type:"json"});if(!body)throw new Error("Les données de l'analyse sont introuvables.");await store.delete(inputKey);await store.setJSON(jobId,{status:"running",started_at:new Date().toISOString(),progress:"Analyse en cours"});const apiKey=Netlify.env.get("OPENAI_API_KEY"),model=Netlify.env.get("OPENAI_MODEL")||"gpt-5.6-luna";if(!apiKey)throw new Error("La clé OpenAI n'est pas configurée.");const listingUrl=String(body?.listingUrl||"").trim(),address=String(body?.address||"").trim().slice(0,300),docs:Doc[]=Array.isArray(body?.documents)?body.documents.slice(0,30):[],extra=String(body?.extra||"").slice(0,7000);if(!listingUrl&&!address&&docs.length===0)throw new Error("Ajoutez au moins une annonce, une adresse ou un document.");const prepared=prepareDocs(docs);
-const system=`Tu es le moteur AvantOffre, aide à la décision avant une offre immobilière en France. Analyse en profondeur en interne, mais restitue une conclusion simple, concrète et proportionnée. Ne noie jamais l'acheteur sous les informations : top_strengths 3 maximum, top_risks 3 maximum, what_changes_the_decision 4 maximum, missing_or_to_obtain 4 maximum, questions_before_offer 4 maximum. Les listes secondaires doivent être priorisées par impact réel sur la décision.
-STYLE RÉDACTIONNEL : écris comme un professionnel de l’immobilier expérimenté qui explique simplement un dossier à un acquéreur. Utilise un français naturel, sobre et concret. Bannir absolument le mot « achetable » et les tournures artificielles ou typiques d’une IA telles que « opportunité intéressante », « présente un profil », « il convient de noter », « dans ce contexte », « à mettre en perspective » lorsqu’une formulation simple suffit. Préfère : prix cohérent, bien correctement positionné, élément à vérifier, point à prendre en compte, marge de négociation possible. Ne transforme pas une caractéristique neutre en défaut. Un 1er étage sans ascenseur ou un dernier étage bas sans ascenseur n’est pas, à lui seul, un point négatif. L’absence d’ascenseur devient une vigilance seulement si l’étage, l’usage ou le marché local lui donnent un impact réel. Réserve top_risks et weaknesses aux éléments objectivement défavorables, documentés et utiles à la décision.
-FIABILITÉ : distingue FACT / INFERENCE / UNKNOWN. Une donnée absente n'est jamais zéro ni un risque avéré. Un solde vendeur n'est pas un impayé collectif. Un projet ou PPPT n'est pas un travail voté. N'invente jamais prix, vente, montant, obligation légale ou décision. Cite fichier/page quand possible. Ne qualifie jamais un PDF de « non lisible » uniquement parce que son contenu a été tronqué ou partiellement transmis : distingue document absent, extraction partielle, contenu tronqué et véritable contenu inexploitable.
-PRIX ET DVF : si une adresse est fournie, utilise la recherche web pour rechercher prioritairement des transactions réellement enregistrées issues de DVF/DGFiP ou DVF+ Cerema. La source officielle est prioritaire sur tout portail privé. Cherche dans cet ordre : même adresse/résidence, même rue, rues adjacentes, rayon 300 m, puis 500 m seulement si nécessaire. Retenir 3 à 5 comparables pertinents : même nature de bien, surface idéalement ±20 %, typologie proche et période récente. Pour chaque comparable, ne renseigne prix/date/surface que si la source permet de les établir. type doit être DVF pour une vente officielle, annonce pour un prix demandé. Ne transforme jamais une annonce en vente. Si les DVF fiables sont insuffisantes, dis-le explicitement et baisse market.confidence. La fourchette de valeur doit s'appuyer prioritairement sur ces ventes et tenir compte des différences documentées.
-COPRO : analyse finances, travaux, gouvernance et technique. Sépare strictement voté, discuté, reporté et PPPT. BIEN : configuration, état, DPE/diagnostics, étage/ascenseur, extérieur, parking, occupation.
-BLOC 1 TRAVAUX & DIAGNOSTICS : transforme les anomalies des diagnostics (électricité, gaz, amiante, plomb, assainissement, DPE et autres) en conséquences concrètes. Pour chaque poste, indique priorité, nature (obligatoire si et seulement si juridiquement établi, mise en sécurité/recommandé, amélioration facultative), budget bas/haut seulement s'il peut être raisonnablement estimé, et source. Une anomalie de diagnostic n'est jamais automatiquement un travail légalement obligatoire. Si le caractère obligatoire est incertain, indique-le explicitement. Donne un total estimatif uniquement pour les postes chiffrables et précise qu'un devis professionnel reste nécessaire.
-BLOC 2 DÉPENSES FUTURES DE COPRO : croise AG, PPPT/PPT, DPE collectif, fonds travaux et sujets techniques récurrents. Classe chaque dépense potentielle en votée / envisagée / risque probable. N'invente jamais une quote-part du lot. Si le coût du lot est inconnu, dis-le.
-BLOC 3 BUDGET RÉEL D'ACQUISITION : calcule si les données le permettent prix + frais d'acquisition estimatifs + travaux privatifs identifiés + quote-part de travaux copro déjà votés restant à charge de l'acquéreur uniquement si cette charge est établie. Sépare les montants certains, estimés et inconnus. Ne double-compte aucun poste.
-BLOC 4 POINTS À VÉRIFIER AVANT OFFRE : génère des vérifications spécifiques au dossier, pas une checklist générique. Détecte aussi les incohérences entre annonce et documents (surface, chauffage, charges, parking, travaux, DPE, occupation, etc.) et transforme les risques chiffrables en arguments de négociation.
-AVIS : donne un avis général clair et une stratégie d'offre, sans dramatiser les pièces simplement absentes ni les caractéristiques neutres. Le ton doit rester mesuré : distingue un vrai risque, un simple point à connaître et une préférence personnelle.
-Retourne UNIQUEMENT un JSON valide : {"property":{"title":"","address":"","asking_price":null,"surface_m2":null,"price_per_m2":null,"rooms":null,"floor":"","dpe":"","occupied":null,"rent_excl_charges":null,"charges_provision":null,"assets":[],"weaknesses":[],"diagnostics":[],"property_analysis":""},"market":{"estimate_low":null,"estimate_high":null,"offer_low":null,"offer_high":null,"confidence":"faible|moyenne|bonne","positioning":"","comparables":[{"label":"","date":"","price":null,"surface":null,"price_m2":null,"type":"DVF|annonce|estimation","distance_note":"","source":""}],"analysis":""},"copro_metrics":{"annual_budget":null,"collective_arrears":null,"collective_arrears_ratio_pct":null,"supplier_debt":null,"supplier_debt_ratio_pct":null,"cash":null,"works_fund":null,"works_fund_ratio_pct":null,"lot_annual_charges":null,"recoverable_charges":null},"copro":{"financial_analysis":"","governance_analysis":"","technical_analysis":"","recurring_topics":[],"litigation":[],"strengths":[],"weaknesses":[]},"works":{"voted":[],"discussed":[],"rejected_or_postponed":[],"recommended_pppt":[],"recent_completed":[],"asl":[],"analysis":""},"buyer_blocks":{"diagnostic_works":{"summary":"","items":[{"category":"","issue":"","priority":"faible|moyenne|élevée","nature":"obligatoire|mise en sécurité / recommandé|amélioration facultative|à confirmer","budget_low":null,"budget_high":null,"source":""}],"total_budget_low":null,"total_budget_high":null,"budget_note":""},"future_copro_costs":{"summary":"","items":[{"work":"","status":"voté|envisagé|risque probable","estimated_total":null,"estimated_lot_share":null,"timing":"","source":""}],"lot_exposure_low":null,"lot_exposure_high":null,"unknown_exposure":[]},"real_acquisition_budget":{"purchase_price":null,"acquisition_fees_estimate":null,"private_works_low":null,"private_works_high":null,"voted_copro_share":null,"known_total_low":null,"known_total_high":null,"unknown_costs":[],"summary":""},"before_offer_checks":{"summary":"","checks":[],"inconsistencies":[],"negotiation_impacts":[]}},"documents":{"received":[],"missing_or_to_obtain":[],"quality_notes":[],"analysis":""},"risk_flags":{"electrical_anomalies":false,"major_property_defect":false,"no_elevator_high_floor":false,"poor_dpe":false,"sold_occupied":false,"no_parking_when_expected":false,"strong_property_assets":false,"voted_major_works":false,"pppt_significant_medium_term":false,"recurring_major_technical_issue":false,"recent_major_works_completed":false,"poor_maintenance":false,"litigation":false,"governance_issue":false,"asl_active":false},"executive_summary":{"headline":"","overview":"","top_strengths":[],"top_risks":[],"financial_exposure":"","what_changes_the_decision":[]},"negotiation":{"recommended_strategy":"","arguments":[],"conditions_before_offer":[],"offer_comment":""},"evidence":[{"claim":"","status":"FACT|INFERENCE|UNKNOWN","source":"","detail":""}],"questions_before_offer":[],"verdict":{"label":"","summary":"","vigilance":"faible|modérée|forte","why":"","go_if":[],"stop_if":[]}}`;
-const user=`ADRESSE DU BIEN:\n${address||"non fournie"}\n\nURL ANNONCE:\n${listingUrl||"non fournie"}\n\nINFORMATIONS:\n${extra||"aucune"}\n\nDOCUMENTS:\n${prepared.map((d,i)=>`\n--- DOCUMENT ${i+1}: ${d.name} | pages=${d.pages??"?"} | caractères transmis=${d.chars_transmitted}/${d.chars_source}${d.truncated?" | EXTRACTION PARTIELLE":""} ---\n${d.text}`).join("\n")}`;const payload:any={model,input:[{role:"system",content:[{type:"input_text",text:system}]},{role:"user",content:[{type:"input_text",text:user}]}],tools:(listingUrl||address)?[{type:"web_search"}]:[],reasoning:{effort:"medium"},max_output_tokens:16000};const rsp=await fetch("https://api.openai.com/v1/responses",{method:"POST",headers:{Authorization:`Bearer ${apiKey}`,"Content-Type":"application/json"},body:JSON.stringify(payload)});const raw=await rsp.text();let data:any=null;try{data=raw?JSON.parse(raw):null}catch{}if(!rsp.ok)throw new Error(data?.error?.message||`Erreur moteur (${rsp.status}).`);let outText=data?.output_text;if(!outText&&Array.isArray(data?.output))outText=data.output.flatMap((o:any)=>o.content||[]).filter((c:any)=>c.type==="output_text").map((c:any)=>c.text).join("\n");if(!outText)throw new Error("Aucun rapport exploitable.");const analysis=safeJsonFromText(outText),scores=deterministicScores(analysis,docs),p=analysis?.property||{};if(address&&!p.address)p.address=address;if(p.asking_price&&p.surface_m2&&!p.price_per_m2)p.price_per_m2=Math.round(p.asking_price/p.surface_m2);await store.setJSON(jobId,{status:"done",result:{analysis,scores,meta:{model,document_count:docs.length,beta:true,generated_at:new Date().toISOString()}}});}catch(err:any){console.error("AvantOffre background error",err);if(jobId)await store.setJSON(jobId,{status:"error",error:err?.message||"Erreur interne."});}};
+import { jobStore, expiresIn } from "../lib/storage.mjs";
+import { prepareDocs, normalizeAnalysis, applyOfficialMarketData, deterministicScores, num } from "../lib/reliability-core.mjs";
+
+type Doc={name:string;text:string;pages?:number;chars?:number;quality?:string;ocrPages?:number;weakPages?:number;pageStats?:any[]};
+
+const jsonText=(value:any)=>JSON.stringify(value);
+const safeJsonFromText=(value:string)=>{
+  const cleaned=String(value||"").trim().replace(/^```json\s*/i,"").replace(/```$/i,"").trim();
+  try{return JSON.parse(cleaned)}catch{}
+  const s=cleaned.indexOf("{"),e=cleaned.lastIndexOf("}");
+  if(s>=0&&e>s)return JSON.parse(cleaned.slice(s,e+1));
+  throw new Error("Réponse IA non structurée");
+};
+
+async function fetchJson(url:string,timeoutMs=9000){
+  const controller=new AbortController();
+  const timer=setTimeout(()=>controller.abort(),timeoutMs);
+  try{
+    const rsp=await fetch(url,{headers:{Accept:"application/json","User-Agent":"ReVisite/0.2"},signal:controller.signal});
+    if(!rsp.ok)throw new Error(`HTTP ${rsp.status}`);
+    return await rsp.json();
+  }finally{clearTimeout(timer)}
+}
+
+async function fetchDvfCandidates(address:string){
+  if(!address)return{status:"not_requested",candidates:[],source:""};
+  try{
+    const geo=new URL("https://data.geopf.fr/geocodage/completion/");
+    geo.searchParams.set("text",address);geo.searchParams.set("type","StreetAddress");geo.searchParams.set("maximumResponses","1");
+    const g:any=await fetchJson(geo.toString(),7000);
+    const first=Array.isArray(g?.results)?g.results[0]:null;
+    const lon=num(first?.x),lat=num(first?.y);
+    if(lon===null||lat===null)return{status:"geocode_unavailable",candidates:[],source:""};
+    const latDelta=.0052,lonDelta=.0052/Math.max(.45,Math.cos(lat*Math.PI/180));
+    const bbox=[lon-lonDelta,lat-latDelta,lon+lonDelta,lat+latDelta].map(v=>v.toFixed(6)).join(",");
+    const year=new Date().getUTCFullYear()-3;
+    const bases=["https://apidf.cerema.fr","https://apidf-preprod.cerema.fr"];
+    for(const base of bases){
+      try{
+        const u=new URL("/dvf_opendata/mutations/",base);
+        u.searchParams.set("in_bbox",bbox);u.searchParams.set("anneemut_min",String(year));u.searchParams.set("codtypbien","111,121");u.searchParams.set("page_size","250");u.searchParams.set("ordering","-datemut");
+        const d:any=await fetchJson(u.toString(),10000);
+        const rows=Array.isArray(d?.results)?d.results:Array.isArray(d)?d:[];
+        if(rows.length)return{status:"ok",candidates:rows.slice(0,250),source:base,lat,lon};
+      }catch{}
+    }
+    return{status:"unavailable",candidates:[],source:"",lat,lon};
+  }catch{return{status:"unavailable",candidates:[],source:""}}
+}
+
+function dvfPromptRows(rows:any[]){
+  return rows.slice(0,60).map((x:any)=>{
+    const p=num(x?.valeurfonc),s=num(x?.sbati),pm=p&&s?Math.round(p/s):null;
+    return [x?.datemut||"?",x?.libtypbien||x?.codtypbien||"bien",p?`${Math.round(p)}€`:"prix ?",s?`${s}m²`:"surface ?",pm?`${pm}€/m²`:""].filter(Boolean).join(" | ");
+  }).join("\n");
+}
+
+async function recordUsage(store:any,usage:any){
+  if(!usage)return;
+  try{
+    const day=new Date().toISOString().slice(0,10),key=`usage-${day}`;
+    const previous:any=await store.get(key,{type:"json"})||{};
+    await store.setJSON(key,{
+      date:day,calls:(Number(previous.calls)||0)+1,
+      input_tokens:(Number(previous.input_tokens)||0)+(Number(usage.input_tokens)||0),
+      output_tokens:(Number(previous.output_tokens)||0)+(Number(usage.output_tokens)||0),
+      total_tokens:(Number(previous.total_tokens)||0)+(Number(usage.total_tokens)||0),
+      expires_at:expiresIn(1000*60*60*24*120)
+    });
+  }catch{}
+}
+
+export default async(req:Request,_context:Context)=>{
+  let jobId="";const store=jobStore();
+  try{
+    const trigger:any=await req.json();
+    jobId=String(trigger?.jobId||"").replace(/[^a-zA-Z0-9_-]/g,"").slice(0,80);
+    if(!jobId)return;
+    const inputKey=`input-${jobId}`;
+    const body:any=await store.get(inputKey,{type:"json"});
+    if(!body)throw new Error("Les données de l'analyse sont introuvables.");
+    await store.delete(inputKey);
+    await store.setJSON(jobId,{status:"running",started_at:new Date().toISOString(),progress:"Analyse en cours",expires_at:expiresIn(1000*60*60*3)});
+
+    const apiKey=Netlify.env.get("OPENAI_API_KEY"),model=Netlify.env.get("OPENAI_MODEL")||"gpt-5.6-luna";
+    if(!apiKey)throw new Error("La clé OpenAI n'est pas configurée.");
+    const listingUrl=String(body?.listingUrl||"").trim().slice(0,1200),address=String(body?.address||"").trim().slice(0,300),docs:Doc[]=Array.isArray(body?.documents)?body.documents.slice(0,30):[],extra=String(body?.extra||"").slice(0,7000);
+    if(!listingUrl&&!address&&docs.length===0)throw new Error("Ajoutez au moins une annonce, une adresse ou un document.");
+
+    const prepared=prepareDocs(docs),dvf:any=await fetchDvfCandidates(address);
+    const officialDvf=dvf.status==="ok"?dvfPromptRows(dvf.candidates):"Aucune donnée DVF+ officielle n'a pu être récupérée automatiquement pour cette analyse.";
+
+    const system=`Tu es le moteur ReVisite, outil français d'aide à la décision avant une offre immobilière. Tu dois être utile, simple et surtout factuel.
+
+RÈGLES DE FIABILITÉ
+- Distingue FACT, INFERENCE et UNKNOWN. Une donnée absente n'est jamais zéro et n'est jamais un risque avéré.
+- Un solde vendeur n'est pas un impayé collectif. Un projet ou PPPT n'est pas un travail voté. Une discussion en AG n'est pas une décision.
+- N'invente jamais un prix, une vente, une surface, un montant de charges, une obligation légale, une décision d'AG ou une quote-part.
+- Chaque fait important issu d'un document doit indiquer le fichier et la page lorsque le marqueur [PAGE N] est disponible.
+- Un document partiellement extrait réduit la confiance mais ne constitue pas un défaut du bien.
+- Les caractéristiques neutres (ex. premier étage sans ascenseur) ne deviennent pas des risques sans impact concret.
+
+PRIX / MARCHÉ
+- Les lignes DVF+ fournies dans le message utilisateur proviennent du Cerema. Utilise-les comme source prioritaire pour les ventes enregistrées.
+- N'invente AUCUNE vente DVF supplémentaire. Si les ventes fournies sont insuffisantes, indique une confiance faible ou moyenne.
+- L'URL d'annonce peut être recherchée uniquement pour compléter les caractéristiques ou le prix demandé. Une annonce n'est jamais une vente réalisée.
+
+COPROPRIÉTÉ
+- Sépare strictement travaux votés, discutés, rejetés/reportés et recommandations PPPT/PPT.
+- Distingue charges courantes, récupérables, travaux exceptionnels, impayés collectifs et solde individuel.
+
+DIAGNOSTICS / TRAVAUX
+- Une anomalie de diagnostic n'est pas automatiquement un travail juridiquement obligatoire.
+- Ne chiffre que ce qui peut raisonnablement l'être et indique quand un devis professionnel est nécessaire.
+
+STYLE
+- Français naturel, sobre et concret. 3 points forts maximum, 3 points de vigilance maximum, 4 éléments qui changent la décision maximum.
+- Bannir les formulations artificielles et alarmistes. Le rapport doit être compréhensible par un acquéreur non spécialiste.
+
+Retourne uniquement un objet JSON valide correspondant aux rubriques demandées.`;
+
+    const schemaHint={
+      property:{title:"",address:"",asking_price:null,surface_m2:null,price_per_m2:null,rooms:null,floor:"",dpe:"",occupied:null,rent_excl_charges:null,charges_provision:null,assets:[],weaknesses:[],diagnostics:[],property_analysis:""},
+      market:{estimate_low:null,estimate_high:null,offer_low:null,offer_high:null,confidence:"faible|moyenne|bonne",positioning:"",comparables:[],analysis:""},
+      copro_metrics:{annual_budget:null,collective_arrears:null,collective_arrears_ratio_pct:null,supplier_debt:null,supplier_debt_ratio_pct:null,cash:null,works_fund:null,works_fund_ratio_pct:null,lot_annual_charges:null,recoverable_charges:null},
+      copro:{financial_analysis:"",governance_analysis:"",technical_analysis:"",recurring_topics:[],litigation:[],strengths:[],weaknesses:[]},
+      works:{voted:[],discussed:[],rejected_or_postponed:[],recommended_pppt:[],recent_completed:[],asl:[],analysis:""},
+      buyer_blocks:{diagnostic_works:{summary:"",items:[],total_budget_low:null,total_budget_high:null,budget_note:""},future_copro_costs:{summary:"",items:[],lot_exposure_low:null,lot_exposure_high:null,unknown_exposure:[]},real_acquisition_budget:{purchase_price:null,acquisition_fees_estimate:null,private_works_low:null,private_works_high:null,voted_copro_share:null,known_total_low:null,known_total_high:null,unknown_costs:[],summary:""},before_offer_checks:{summary:"",checks:[],inconsistencies:[],negotiation_impacts:[]}},
+      documents:{received:[],missing_or_to_obtain:[],quality_notes:[],analysis:""},risk_flags:{},
+      executive_summary:{headline:"",overview:"",top_strengths:[],top_risks:[],financial_exposure:"",what_changes_the_decision:[]},
+      negotiation:{recommended_strategy:"",arguments:[],conditions_before_offer:[],offer_comment:""},
+      evidence:[],questions_before_offer:[],verdict:{label:"",summary:"",vigilance:"faible|modérée|forte",why:"",go_if:[],stop_if:[]}
+    };
+
+    const user=`ADRESSE DU BIEN:\n${address||"non fournie"}\n\nURL ANNONCE:\n${listingUrl||"non fournie"}\n\nINFORMATIONS COMPLÉMENTAIRES:\n${extra||"aucune"}\n\nVENTES DVF+ OFFICIELLES DU SECTEUR (CANDIDATS BRUTS À FILTRER SELON LE BIEN):\n${officialDvf}\n\nSTRUCTURE JSON ATTENDUE:\n${jsonText(schemaHint)}\n\nDOCUMENTS EXTRAITS:\n${prepared.map((d:any,i:number)=>`\n--- DOCUMENT ${i+1}: ${d.name} | pages=${d.pages??"?"} | lecture=${d.quality||"non qualifiée"} | caractères transmis=${d.chars_transmitted}/${d.chars_source}${d.truncated?" | ÉCHANTILLONNÉ":""} ---\n${d.text}`).join("\n")}`;
+
+    const payload:any={
+      model,input:[{role:"system",content:[{type:"input_text",text:system}]},{role:"user",content:[{type:"input_text",text:user}]}],
+      tools:listingUrl?[{type:"web_search"}]:[],reasoning:{effort:"medium"},max_output_tokens:10000,
+      text:{format:{type:"json_object"},verbosity:"low"},store:false,prompt_cache_key:"revisite-analysis-v2"
+    };
+    const rsp=await fetch("https://api.openai.com/v1/responses",{method:"POST",headers:{Authorization:`Bearer ${apiKey}`,"Content-Type":"application/json"},body:JSON.stringify(payload)});
+    const raw=await rsp.text();let data:any=null;try{data=raw?JSON.parse(raw):null}catch{}
+    if(!rsp.ok)throw new Error(data?.error?.message||`Erreur moteur (${rsp.status}).`);
+    let outText=data?.output_text;
+    if(!outText&&Array.isArray(data?.output))outText=data.output.flatMap((o:any)=>o.content||[]).filter((c:any)=>c.type==="output_text").map((c:any)=>c.text).join("\n");
+    if(!outText)throw new Error("Aucun rapport exploitable.");
+
+    let analysis=normalizeAnalysis(safeJsonFromText(outText));
+    if(address)analysis.property.address=address;
+    analysis=applyOfficialMarketData(analysis,dvf.candidates||[]);
+    const p=analysis.property||{};
+    if(p.asking_price&&p.surface_m2&&!p.price_per_m2)p.price_per_m2=Math.round(Number(p.asking_price)/Number(p.surface_m2));
+    const officialCount=Array.isArray(analysis?.market?.comparables)?analysis.market.comparables.filter((x:any)=>x?.type==="DVF").length:0;
+    const scores=deterministicScores(analysis,docs,{officialCount});
+    await recordUsage(store,data?.usage);
+
+    await store.setJSON(jobId,{status:"done",result:{analysis,scores,meta:{
+      model,document_count:docs.length,beta:true,generated_at:new Date().toISOString(),
+      input_chars:prepared.reduce((s:number,d:any)=>s+(Number(d.chars_transmitted)||0),0),
+      dvf_status:dvf.status,dvf_source:dvf.source||null,dvf_candidate_count:Array.isArray(dvf.candidates)?dvf.candidates.length:0,
+      usage:data?.usage||null,score_withheld:scores.overall===null
+    }},expires_at:expiresIn(1000*60*60*3)});
+  }catch(err:any){
+    console.error("ReVisite background error",err);
+    if(jobId)await store.setJSON(jobId,{status:"error",error:err?.message||"Erreur interne.",expires_at:expiresIn(1000*60*60)});
+  }
+};
+
 export const config:Config={path:"/api/worker-background",background:true};
