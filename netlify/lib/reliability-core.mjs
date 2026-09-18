@@ -3,6 +3,11 @@ export const num=v=>v===null||v===undefined||(typeof v==='string'&&v.trim()===''
 const arr=v=>Array.isArray(v)?v:[];
 const obj=v=>v&&typeof v==='object'&&!Array.isArray(v)?v:{};
 const text=v=>typeof v==='string'?v:'';
+const scoreNum=v=>v===null||v===undefined||(typeof v==='string'&&v.trim()==='')?null:(Number.isFinite(Number(v))?clamp(Number(v)):null);
+const sourceInText=v=>/(?:\.pdf\b|\bDIA-[A-Z0-9-]+|\bDECOMPTE\b|\bCarnet\b|\bPV[_\s-]|\bpage\s*\d+|\bdossier\s*\d+)/i.test(text(v));
+const neutralBalconyWeakness=v=>/balcon/i.test(text(v))&&/(?:hors|non\s+inclus|exclu).*carrez|carrez.*(?:hors|non\s+inclus|exclu)/i.test(text(v))&&!/(?:défaut|fissur|infiltr|étanch|sécur|dégrad|travaux)/i.test(text(v));
+const noLitigation=v=>/(?:\bRAS\b|aucune\s+(?:procédure|action|litige)|absence\s+de\s+(?:procédure|litige)|sans\s+(?:procédure|litige))/i.test(text(v));
+const unsupportedChargeJudgment=v=>/charges?/i.test(text(v))&&/(?:élev[ée]es?|faibles?|excessiv|important(?:es)?)/i.test(text(v))&&!/(?:compar|moyenne|benchmark|référence|secteur|budget\s+prévisionnel)/i.test(text(v));
 
 const CATEGORY_WEIGHTS={ag:25,charges:15,accounts:10,diagnostics:15,pppt:15,reglement:10,synthese:5,entretien:5};
 const CATEGORY_PATTERNS={
@@ -110,14 +115,45 @@ export function normalizeAnalysis(input){
     [a.negotiation,'arguments'],[a.negotiation,'conditions_before_offer'],[a,'evidence'],[a,'questions_before_offer'],[a.verdict,'go_if'],[a.verdict,'stop_if']
   ];
   for(const [o,k] of arrayPaths)o[k]=arr(o[k]);
+
+  // Remove neutral facts accidentally promoted to risks.
+  a.property.weaknesses=a.property.weaknesses.filter(x=>!neutralBalconyWeakness(x));
+  a.executive_summary.top_risks=a.executive_summary.top_risks.filter(x=>!neutralBalconyWeakness(x));
+  // "RAS / aucune procédure" is evidence of no known litigation, never litigation itself.
+  a.copro.litigation=a.copro.litigation.filter(x=>!noLitigation(x));
+  // Do not describe charges as high/low without an explicit benchmark.
+  a.negotiation.arguments=a.negotiation.arguments.filter(x=>!unsupportedChargeJudgment(x));
+  a.executive_summary.top_risks=a.executive_summary.top_risks.filter(x=>!unsupportedChargeJudgment(x));
+
   a.executive_summary.top_strengths=a.executive_summary.top_strengths.slice(0,3);
   a.executive_summary.top_risks=a.executive_summary.top_risks.slice(0,3);
   a.executive_summary.what_changes_the_decision=a.executive_summary.what_changes_the_decision.slice(0,4);
-  a.documents.missing_or_to_obtain=a.documents.missing_or_to_obtain.slice(0,4);
-  a.questions_before_offer=a.questions_before_offer.slice(0,4);
-  a.evidence=a.evidence.slice(0,30).map(e=>{const x=obj(e);const status=['FACT','INFERENCE','UNKNOWN'].includes(String(x.status))?String(x.status):'UNKNOWN';return{...x,status:status==='FACT'&&!text(x.source).trim()?'UNKNOWN':status};});
+  a.documents.missing_or_to_obtain=a.documents.missing_or_to_obtain.slice(0,5);
+  a.questions_before_offer=a.questions_before_offer.slice(0,5);
+
+  a.evidence=a.evidence.slice(0,30).map(e=>{
+    const x=obj(e),claim=text(x.claim)||text(x.text);
+    let status=['FACT','INFERENCE','UNKNOWN'].includes(String(x.status))?String(x.status):'UNKNOWN';
+    const explicitSource=text(x.source).trim()||text(x.file).trim();
+    if(status==='FACT'&&!explicitSource&&!sourceInText(claim))status='UNKNOWN';
+    return{...x,claim:claim||undefined,status,source:explicitSource||undefined};
+  });
   for(const key of Object.keys(a.risk_flags))a.risk_flags[key]=a.risk_flags[key]===true;
   return a;
+}
+
+export function hardenScores(result){
+  const s=result?.scores;if(!s)return result;
+  s.property=scoreNum(s.property);s.copro=scoreNum(s.copro);s.market=scoreNum(s.market);
+  s.documentation=scoreNum(s.documentation);s.confidence=scoreNum(s.confidence);
+  const meta=result?.meta||{};
+  const allAxesKnown=s.property!==null&&s.copro!==null&&s.market!==null;
+  const enoughDocs=s.documentation!==null&&s.documentation>=60;
+  const enoughConfidence=s.confidence!==null&&s.confidence>=60;
+  s.overall=Boolean(meta.score_withheld)||!allAxesKnown||!enoughDocs||!enoughConfidence?null:scoreNum(s.overall);
+  const conf=s.confidence;
+  s.confidence_label=conf===null?"faible":conf>=85?"très bonne":conf>=70?"bonne":conf>=55?"moyenne":conf>=40?"limitée":"faible";
+  return result;
 }
 
 function median(xs){const a=xs.filter(Number.isFinite).sort((x,y)=>x-y);if(!a.length)return null;const m=Math.floor(a.length/2);return a.length%2?a[m]:(a[m-1]+a[m])/2;}
@@ -169,30 +205,55 @@ export function applyOfficialMarketData(analysis,candidates=[]){
 }
 
 export function deterministicScores(a,docs=[],marketMeta={}){
-  const r=obj(a?.risk_flags);let property=82;
+  const r=obj(a?.risk_flags),coverage=documentCoverage(docs),documentation=coverage.score;
+  let property=82;
   if(r.electrical_anomalies)property-=5;if(r.major_property_defect)property-=12;if(r.no_elevator_high_floor)property-=6;if(r.poor_dpe)property-=8;if(r.sold_occupied)property-=2;if(r.no_parking_when_expected)property-=3;if(r.strong_property_assets)property+=4;property=clamp(property);
+
   let finance=40;const ar=num(a?.copro_metrics?.collective_arrears_ratio_pct),sr=num(a?.copro_metrics?.supplier_debt_ratio_pct),fr=num(a?.copro_metrics?.works_fund_ratio_pct);
-  if(ar!==null)finance-=ar>25?18:ar>15?12:ar>8?6:0;else finance-=5;if(sr!==null)finance-=sr>15?7:sr>8?4:0;if(fr!==null)finance+=fr>15?3:fr<3?-4:0;finance=clamp(finance,0,40);
+  if(ar!==null)finance-=ar>25?18:ar>15?12:ar>8?6:0;else finance-=5;
+  if(sr!==null)finance-=sr>15?7:sr>8?4:0;
+  if(fr!==null)finance+=fr>15?3:fr<3?-4:0;finance=clamp(finance,0,40);
+
   let works=25;if(r.voted_major_works)works-=10;if(r.pppt_significant_medium_term)works-=6;if(r.recurring_major_technical_issue)works-=5;if(r.recent_major_works_completed)works+=2;works=clamp(works,0,25);
   let governance=20;if(r.litigation)governance-=5;if(r.governance_issue)governance-=6;if(r.asl_active)governance-=2;governance=clamp(governance,0,20);
   let technical=15;if(r.poor_maintenance)technical-=6;if(r.recurring_major_technical_issue)technical-=4;if(r.recent_major_works_completed)technical+=2;technical=clamp(technical,0,15);
-  const copro=Math.round(finance+works+governance+technical),coverage=documentCoverage(docs),documentation=coverage.score;
+  const copro=Math.round(finance+works+governance+technical);
+
   let market=55;const ask=num(a?.property?.asking_price),lo=num(a?.market?.estimate_low),hi=num(a?.market?.estimate_high);
   if(ask&&lo&&hi&&lo<=hi){if(ask>=lo&&ask<=hi)market=84;else if(ask<lo)market=88;else market=clamp(Math.round(84-((ask-hi)/hi*100)*2.5),35,84)}
-  const officialCount=Math.max(0,Number(marketMeta?.officialCount)||0),marketReliability=officialCount>=3?90:officialCount>=1?70:35;
-  const confidence=Math.round(documentation*.75+marketReliability*.25);
-  const propertyEvidence=Boolean(num(a?.property?.surface_m2)!==null||num(a?.property?.rooms)!==null||text(a?.property?.dpe)||arr(a?.property?.diagnostics).length||arr(a?.property?.assets).length);
-  const coproCategories=coverage.categories||{};
+
+  const officialCount=Math.max(0,Number(marketMeta?.officialCount)||0);
+  const marketReliability=officialCount>=3?90:officialCount>=1?60:0;
+  // Confidence describes the document analysis. Market availability is handled separately.
+  const confidence=Math.round(documentation*.85+(coverage.readability||0)*.15);
+
+  const diagnostics=arr(a?.property?.diagnostics);
+  const propertyEvidence=Boolean(
+    num(a?.property?.surface_m2)!==null &&
+    num(a?.property?.rooms)!==null &&
+    text(a?.property?.dpe).trim() &&
+    diagnostics.length>=2
+  );
+
+  const signals=Array.isArray(docs)?docs.map(docSignal):[];
+  const strongAg=signals.some(s=>s.readability>=.85&&s.categories.ag);
+  const strongAccounts=signals.some(s=>s.readability>=.9&&(s.categories.accounts||s.categories.synthese));
   const coproMetrics=a?.copro_metrics||{};
-  const financeEvidence=["annual_budget","collective_arrears","supplier_debt","cash","works_fund"].some(k=>num(coproMetrics?.[k])!==null);
-  const worksEvidence=[...arr(a?.works?.voted),...arr(a?.works?.discussed),...arr(a?.works?.rejected_or_postponed),...arr(a?.works?.recommended_pppt),...arr(a?.works?.recent_completed)].length>0;
-  const governanceEvidence=arr(a?.copro?.litigation).length>0||Boolean(r.governance_issue||r.litigation);
-  const strongCoproDocs=Array.isArray(docs)&&docs.some(d=>{const s=docSignal(d);return s.readability>=0.9&&Boolean(s.categories.ag||s.categories.accounts||s.categories.synthese)});
-  const strongDocEvidence=coverage.score>=60&&coverage.readability>=70&&strongCoproDocs;
-  const coproEvidence=Boolean(financeEvidence||worksEvidence||governanceEvidence||strongDocEvidence);
+  const financeCoreCount=["annual_budget","collective_arrears","supplier_debt","cash","works_fund"].filter(k=>num(coproMetrics?.[k])!==null).length;
+  // A list of works or a charge statement alone cannot justify a reassuring copro score.
+  const coproEvidence=strongAg&&(strongAccounts||financeCoreCount>=2);
+  const marketEvidence=officialCount>=3&&lo!==null&&hi!==null&&lo<=hi;
+
   const propertyScore=propertyEvidence?property:null;
   const coproScore=coproEvidence?copro:null;
-  const marketScore=officialCount>0?market:null;
-  const overall=docs.length>0&&documentation>=50&&propertyScore!==null&&coproScore!==null&&marketScore!==null?Math.round(propertyScore*.30+coproScore*.40+marketScore*.30):null;
-  return{property:propertyScore,copro:coproScore,market:marketScore,documentation,confidence,overall,axes:{finance,works,governance,technical},coverage};
+  const marketScore=marketEvidence?market:null;
+  const overall=docs.length>0&&documentation>=60&&confidence>=60&&propertyScore!==null&&coproScore!==null&&marketScore!==null
+    ?Math.round(propertyScore*.30+coproScore*.40+marketScore*.30):null;
+
+  return{
+    property:propertyScore,copro:coproScore,market:marketScore,documentation,confidence,overall,
+    axes:{finance,works,governance,technical},coverage,
+    evidence_gate:{property:propertyEvidence,copro:coproEvidence,market:marketEvidence,finance_core_count:financeCoreCount,strong_ag:strongAg,strong_accounts:strongAccounts,official_count:officialCount}
+  };
 }
+
