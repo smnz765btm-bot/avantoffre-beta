@@ -15,37 +15,31 @@ function hasUsableOpenAIKey(){
 
 async function checkRateLimit(store:any,req:Request,cacheKey:string){
   const ip=(req.headers.get("x-nf-client-connection-ip")||req.headers.get("x-forwarded-for")?.split(",")[0]||"unknown").trim();
-  const ipHash=await hash(ip),now=new Date(),day=now.toISOString().slice(0,10),hour=now.toISOString().slice(0,13);
-  const globalKey=`rate-global-${day}`,dayKey=`rate-ip-${day}-${ipHash}`,hourKey=`rate-ip-${hour}-${ipHash}`;
+  const ipHash=await hash(ip),day=new Date().toISOString().slice(0,10),key=`rate-${day}`;
   const fingerprint=String(cacheKey||"").replace(/[^a-zA-Z0-9_-]/g,"").slice(-32);
-  const seenKey=fingerprint?`rate-seen-${day}-${ipHash}-${fingerprint}`:"";
-  const [g,d,h,seen]=await Promise.all([
-    store.get(globalKey,{type:"json"}),store.get(dayKey,{type:"json"}),store.get(hourKey,{type:"json"}),
-    seenKey?store.get(seenKey,{type:"json"}):Promise.resolve(null)
-  ]);
-  // Une relance du même dossier dans la même journée ne consomme pas un nouveau quota.
-  // Cela évite qu'un échec technique bloque l'utilisateur pendant ses tests.
-  if(seen&&!isExpired(seen))return{ok:true,retry:true};
-  const globalLimit=limitEnv("REVISITE_GLOBAL_DAILY_LIMIT",60),dailyLimit=limitEnv("REVISITE_IP_DAILY_LIMIT",12),hourlyLimit=limitEnv("REVISITE_IP_HOURLY_LIMIT",4);
-  if((Number(g?.count)||0)>=globalLimit)return{ok:false,message:"La limite quotidienne de la bêta ReVisite est atteinte. Réessayez demain."};
-  if((Number(d?.count)||0)>=dailyLimit)return{ok:false,message:"Vous avez atteint la limite d'analyses autorisées aujourd'hui pour cette bêta."};
-  if((Number(h?.count)||0)>=hourlyLimit)return{ok:false,message:"Plusieurs analyses différentes viennent d'être lancées. Réessayez un peu plus tard."};
-  const expiry=expiresIn(1000*60*60*48);
-  const writes=[
-    store.setJSON(globalKey,{count:(Number(g?.count)||0)+1,expires_at:expiry}),
-    store.setJSON(dayKey,{count:(Number(d?.count)||0)+1,expires_at:expiry}),
-    store.setJSON(hourKey,{count:(Number(h?.count)||0)+1,expires_at:expiry})
-  ];
-  if(seenKey)writes.push(store.setJSON(seenKey,{cache_key:cacheKey,expires_at:expiry}));
-  await Promise.all(writes);
+  const state:any=await store.get(key,{type:"json"})||{count:0,ips:{}};
+  const ips=state.ips&&typeof state.ips==="object"?state.ips:{};
+  const entry=ips[ipHash]&&typeof ips[ipHash]==="object"?ips[ipHash]:{count:0,fingerprints:[]};
+  const fingerprints=Array.isArray(entry.fingerprints)?entry.fingerprints:[];
+  if(fingerprint&&fingerprints.includes(fingerprint))return{ok:true,retry:true};
+
+  const globalLimit=limitEnv("REVISITE_GLOBAL_DAILY_LIMIT",50),dailyLimit=limitEnv("REVISITE_IP_DAILY_LIMIT",10);
+  if((Number(state.count)||0)>=globalLimit)return{ok:false,message:"La limite quotidienne de la bêta ReVisite est atteinte. Réessayez demain."};
+  if((Number(entry.count)||0)>=dailyLimit)return{ok:false,message:"Vous avez atteint la limite d'analyses autorisées aujourd'hui pour cette bêta."};
+
+  ips[ipHash]={
+    count:(Number(entry.count)||0)+1,
+    fingerprints:fingerprint?[...fingerprints.slice(-11),fingerprint]:fingerprints.slice(-12)
+  };
+  await store.setJSON(key,{count:(Number(state.count)||0)+1,ips,expires_at:expiresIn(1000*60*60*48)});
   return{ok:true,retry:false};
 }
 
 async function resolveDocuments(store:any,jobId:string,inlineDocs:any[],refs:string[]){
   if(!refs.length)return inlineDocs;
   const loaded=await Promise.all(refs.map(ref=>store.get(ref,{type:"json"})));
-  const documents=loaded.filter(Boolean);
-  if(documents.length!==refs.length)throw new Error("Un ou plusieurs documents temporaires ne sont plus disponibles. Réimportez-les puis relancez l'analyse.");
+  if(loaded.filter(Boolean).length!==refs.length)throw new Error("Un ou plusieurs documents temporaires ne sont plus disponibles. Réimportez-les puis relancez l'analyse.");
+  const documents=loaded.flatMap((value:any)=>Array.isArray(value?.documents)?value.documents:[value]).filter(Boolean).slice(0,30);
   return documents;
 }
 
@@ -67,7 +61,7 @@ export default async(req:Request,_context:Context)=>{
     if(!jobId)return json({error:"Identifiant d'analyse manquant."},400);
     const listingUrl=String(body?.listingUrl||"").trim().slice(0,1200),address=String(body?.address||"").trim().slice(0,300);
     const inlineDocuments=Array.isArray(body?.documents)?body.documents.slice(0,30):[];
-    documentRefs=Array.isArray(body?.documentRefs)?body.documentRefs.slice(0,30).map((x:any)=>String(x||"")).filter((x:string)=>x.startsWith(`doc-${jobId}-`)):[];
+    documentRefs=Array.isArray(body?.documentRefs)?body.documentRefs.slice(0,30).map((x:any)=>String(x||"")).filter((x:string)=>x.startsWith(`doc-${jobId}-`)||x.startsWith(`docbatch-${jobId}-`)):[];
     const extra=String(body?.extra||"").slice(0,7000);
     if(!listingUrl&&!address&&inlineDocuments.length===0&&documentRefs.length===0)return json({error:"Ajoutez au moins une annonce, une adresse ou un document."},400);
     if(!hasUsableOpenAIKey()){
