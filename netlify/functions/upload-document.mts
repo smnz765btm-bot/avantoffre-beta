@@ -14,12 +14,13 @@ function hasUsableOpenAIKey(){
 function normalizeDocument(raw:any){
   const index=Number(raw?.index),name=String(raw?.name||"document").slice(0,240),text=String(raw?.text||"");
   const pages=Number.isFinite(Number(raw?.pages))?Number(raw.pages):null;
-  const quality=["ok","partial","failed"].includes(String(raw?.quality))?String(raw.quality):text.trim().length>=80?"ok":"failed";
+  const requestedQuality=String(raw?.quality||"");
+  const quality=["ok","partial","failed"].includes(requestedQuality)?requestedQuality:(text.trim().length>=80?"ok":"failed");
   const ocrPages=Math.max(0,Number(raw?.ocrPages)||0),weakPages=Math.max(0,Number(raw?.weakPages)||0);
-  if(!Number.isInteger(index)||index<0||index>29)throw new Error("Référence de document invalide.");
-  if(text.length>500000)throw new Error(`${name} est trop volumineux après extraction.`);
-  if(quality==="failed"||text.trim().length<80)throw new Error(`${name} n'est pas assez exploitable après OCR.`);
-  return{index,name,text,pages,quality,ocrPages,weakPages};
+  if(!Number.isInteger(index)||index<0||index>29)return{index,name,text:"",pages,quality:"failed",ocrPages,weakPages,accepted:false,error:"Référence de document invalide."};
+  if(text.length>500000)return{index,name,text:"",pages,quality:"failed",ocrPages,weakPages,accepted:false,error:`${name} est trop volumineux après extraction.`};
+  if(quality==="failed"||text.trim().length<80)return{index,name,text:"",pages,quality:"failed",ocrPages,weakPages,accepted:false,error:`${name} n'est pas assez exploitable après OCR.`};
+  return{index,name,text,pages,quality,ocrPages,weakPages,accepted:true,error:null};
 }
 
 export default async(req:Request,_context:Context)=>{
@@ -33,7 +34,8 @@ export default async(req:Request,_context:Context)=>{
 
     const incoming=Array.isArray(body?.documents)?body.documents:[body];
     if(!incoming.length||incoming.length>12)return json({error:"Lot de documents invalide."},400);
-    const docs=incoming.map(normalizeDocument);
+    const normalized=incoming.map(normalizeDocument);
+    const docs=normalized.filter((d:any)=>d.accepted);
     const totalChars=docs.reduce((s:number,d:any)=>s+d.text.length,0);
     if(totalChars>900000)return json({error:"Lot de documents trop volumineux. ReVisite le renverra en plusieurs lots."},413);
 
@@ -44,15 +46,21 @@ export default async(req:Request,_context:Context)=>{
     }
     const batchIndex=Math.max(0,Number(body?.batchIndex)||0);
     const key=`docbatch-${jobId}-${batchIndex}`;
-    await store.setJSON(key,{documents:prepared,expires_at:expiresIn(1000*60*60*3)});
+    if(prepared.length)await store.setJSON(key,{documents:prepared,expires_at:expiresIn(1000*60*60*3)});
 
+    const responseDocs=normalized.map((d:any)=>{
+      const saved=prepared.find((p:any)=>p.index===d.index);
+      return{
+        index:d.index,name:d.name,chars:saved?.text?.length||0,actualChars:saved?.text?.length||0,
+        quality:saved?.quality||"failed",accepted:Boolean(saved),error:d.error||null,
+        ocrPages:d.ocrPages,weakPages:d.weakPages,contentHash:saved?.contentHash||null
+      };
+    });
     return json({
-      ref:key,
+      ref:prepared.length?key:null,
       count:prepared.length,
-      documents:prepared.map(d=>({
-        index:d.index,name:d.name,chars:d.text.length,actualChars:d.text.length,quality:d.quality,
-        ocrPages:d.ocrPages,weakPages:d.weakPages,contentHash:d.contentHash
-      }))
+      rejected:normalized.length-prepared.length,
+      documents:responseDocs
     });
   }catch(err:any){
     console.error("ReVisite upload document error",err);
