@@ -77,7 +77,7 @@ export function prepareDocs(docs=[],options={}){
   const MAX_DOC=Math.max(12000,Number(options?.maxDoc)||50000);
   const list=Array.isArray(docs)?docs.slice(0,30):[];
   if(!list.length)return[];
-  const fairCap=Math.max(9000,Math.floor(MAX_TOTAL/list.length));
+  const fairCap=Math.max(3000,Math.floor(MAX_TOTAL/list.length));
   const cap=Math.min(MAX_DOC,fairCap);
   return list.map(d=>{
     const raw=text(d?.text);
