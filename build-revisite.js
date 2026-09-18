@@ -10,10 +10,12 @@ h=h.replace(/<title>.*?<\/title>/i,'<title>ReVisite — Au-delà de la visite.</
 h=h.replace(/<div class="brand">[\s\S]*?<\/div>/i,'<div class="brand"><span class="rv-wordmark"><b>[re]</b>visite</span><small class="rv-baseline">Au-delà de la visite.</small></div>');
 
 // Economie Netlify: les statuts n'ont pas besoin d'être interrogés toutes les 4 secondes.
+// Le build reste idempotent : il accepte aussi le polling déjà optimisé dans la source.
 const pollOld="for(let i=0;i<180;i++){await sleep(4000);";
 const pollNew="for(let i=0;i<75;i++){await sleep(i<3?6000:i<12?10000:15000);";
-if(!h.includes(pollOld))throw new Error('ReVisite polling hook missing');
-h=h.replace(pollOld,pollNew);
+const pollAlreadyOptimized=/for\(let i=0;i<(?:75|100);i\+\+\)\{await sleep\(i<\d+\?\d+:i<\d+\?\d+:\d+\);/;
+if(h.includes(pollOld))h=h.replace(pollOld,pollNew);
+else if(!pollAlreadyOptimized.test(h))throw new Error('ReVisite polling hook missing');
 
 // Les statistiques page par page servent au contrôle local d'OCR mais ne sont pas nécessaires au backend.
 const uploadOld="body:JSON.stringify({jobId,index:i,...d})";
