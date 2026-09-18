@@ -1,0 +1,27 @@
+name: Probe official DVF static fallback once
+
+on:
+  push:
+    branches: [reliability-report-v1]
+    paths:
+      - '.github/workflows/probe-dvf-static-once.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 4
+    steps:
+      - name: Probe Toulouse official static DVF files
+        shell: bash
+        run: |
+          set -euo pipefail
+          for Y in 2026 2025 2024 2023; do
+            URL="https://files.data.gouv.fr/geo-dvf/latest/csv/$Y/communes/31/31555.csv"
+            CODE=$(curl -L -sS --max-time 20 -o "/tmp/$Y.csv" -w '%{http_code}' "$URL")
+            SIZE=$(wc -c < "/tmp/$Y.csv" || echo 0)
+            echo "$Y HTTP=$CODE SIZE=$SIZE"
+            if [ "$CODE" = "200" ]; then head -n 3 "/tmp/$Y.csv"; fi
+          done
