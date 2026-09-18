@@ -185,14 +185,31 @@ export function extractDeterministicFacts(docs=[]){
   const energyCostHigh=energyCostMatch?frNumber(energyCostMatch[2]):null;
 
   let energy=null,ges=null;
-  const perf=diag.match(/performance\s+[ée]nerg[ée]tique\s+et\s+climatique([\s\S]{0,1800}?)(?:estimation\s+des\s+co[uû]ts|informations\s+diagnostiqueur|\[PAGE|$)/i);
-  if(perf){
-    const nums=[...perf[1].matchAll(/\b(\d{1,3})\b/g)].map(m=>Number(m[1])).filter(Number.isFinite);
+  const explicitClassMatch=diag.match(/(?:\bDPE\b|classe\s+[ée]nerg[ée]tique|[ée]tiquette\s+[ée]nergie)\s*(?:classe)?\s*[:=–-]?\s*([A-G])\b/i);
+  const explicitDpe=explicitClassMatch?String(explicitClassMatch[1]).toUpperCase():null;
+  const dpePages=diag.split(/(?=\[PAGE\s+\d+)/i).filter(x=>/DPE|performance\s+[ée]nerg[ée]tique|co[uû]ts\s+annuels\s+d['’]?[ée]nergie|logement\s+extr[eê]mement\s+performant/i.test(x));
+  const zones=dpePages.length?dpePages:[diag];
+  for(const zone of zones){
+    if(energy!==null&&ges!==null)break;
+    const unitPair=zone.match(/\b(\d{2,3})\s*(?:kwh|kw\s*h)[^\d]{0,80}(\d{1,3})\s*(?:kg\s*(?:co2|co₂)|kgco2)/i);
+    if(unitPair){
+      const e=Number(unitPair[1]),g=Number(unitPair[2]);
+      if(e>=20&&e<=700&&g>=0&&g<=150&&e>g*2){energy=e;ges=g;break}
+    }
+    const perf=zone.match(/(?:performance\s+[ée]nerg[ée]tique(?:\s+et\s+climatique)?|consommation\s+[ée]nerg[ée]tique)([\s\S]{0,2600})/i);
+    const sample=perf?.[1]||zone;
+    const nums=[...sample.matchAll(/\b(\d{1,3})\b/g)].map(m=>Number(m[1])).filter(Number.isFinite);
+    const pairs=[];
     for(let i=0;i<nums.length-1;i++){
-      if(nums[i]>=20&&nums[i]<=700&&nums[i+1]>=0&&nums[i+1]<=150&&nums[i]>nums[i+1]*2){energy=nums[i];ges=nums[i+1];break}
+      const e=nums[i],g=nums[i+1];
+      if(e>=50&&e<=500&&g>=1&&g<=100&&e>g*3)pairs.push([e,g]);
+    }
+    if(pairs.length){
+      pairs.sort((a,b)=>(b[0]/Math.max(1,b[1]))-(a[0]/Math.max(1,a[1])));
+      [energy,ges]=pairs[0];
     }
   }
-  const dpe=dpeClassFromValues(surface,energy,ges);
+  const dpe=dpeClassFromValues(surface,energy,ges)||explicitDpe;
 
   const annualCharges=
     firstMatchNumber(charges,/total\s+des\s+charges\s+sur\s+cette\s+p[ée]riode[\s\S]{0,220}?(\d{3,6}(?:[.,]\d{2}))/i);
@@ -212,9 +229,13 @@ export function applyDeterministicFacts(analysis,docs=[]){
   if(f.surface_m2!==null)a.property.surface_m2=f.surface_m2;
   if(f.rooms!==null)a.property.rooms=f.rooms;
   if(f.floor)a.property.floor=f.floor;
+  const hasDiagnosticDocs=Array.isArray(docs)&&docs.some(d=>{const s=docSignal(d);return s.categories.diagnostics||/DIA|diagnostic|DPE/i.test(text(d?.name))});
   if(f.dpe)a.property.dpe=f.dpe;
+  else if(hasDiagnosticDocs)a.property.dpe=null;
   if(f.energy_consumption_kwh_m2!==null)a.property.energy_consumption_kwh_m2=f.energy_consumption_kwh_m2;
+  else if(hasDiagnosticDocs)a.property.energy_consumption_kwh_m2=null;
   if(f.ghg_kgco2_m2!==null)a.property.ghg_kgco2_m2=f.ghg_kgco2_m2;
+  else if(hasDiagnosticDocs)a.property.ghg_kgco2_m2=null;
   if(f.energy_cost_low!==null)a.property.energy_cost_low=f.energy_cost_low;
   if(f.energy_cost_high!==null)a.property.energy_cost_high=f.energy_cost_high;
   if(f.lot_annual_charges!==null)a.copro_metrics.lot_annual_charges=f.lot_annual_charges;
