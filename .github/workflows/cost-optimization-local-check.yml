@@ -99,10 +99,15 @@ jobs:
             uploadCalls++;
             const body=JSON.parse(route.request().postData()||'{}');
             const docs=Array.isArray(body.documents)?body.documents:[];
+            const rejectedIndex=6;
+            const rows=docs.map(d=>d.index===rejectedIndex
+              ? {index:d.index,name:d.name,chars:0,actualChars:0,quality:'failed',accepted:false,error:d.name+" n'est pas assez exploitable après OCR.",ocrPages:d.ocrPages||0,weakPages:d.weakPages||0,contentHash:null}
+              : {index:d.index,name:d.name,chars:d.text.length,actualChars:d.text.length,quality:d.quality||'ok',accepted:true,error:null,ocrPages:d.ocrPages||0,weakPages:d.weakPages||0,contentHash:'local-'+d.index});
             await route.fulfill({status:200,contentType:'application/json',body:JSON.stringify({
               ref:'docbatch-local-'+body.batchIndex,
-              count:docs.length,
-              documents:docs.map(d=>({index:d.index,name:d.name,chars:d.text.length,actualChars:d.text.length,quality:d.quality||'ok',ocrPages:d.ocrPages||0,weakPages:d.weakPages||0,contentHash:'local-'+d.index}))
+              count:rows.filter(x=>x.accepted).length,
+              rejected:rows.filter(x=>!x.accepted).length,
+              documents:rows
             })});
           });
           await page.route('**/api/analyze-background', async route=>{
@@ -132,6 +137,8 @@ jobs:
           if(statusCalls!==0) throw new Error('Cached/immediate result must not poll status, got '+statusCalls);
           if(legacyAddressCalls!==0) throw new Error('Legacy Netlify address function was called '+legacyAddressCalls+' time(s)');
           if(await page.locator('script[src*="map-enhancements"]').count()) throw new Error('Broken legacy map enhancement script is still loaded');
+          const badDocs=await page.locator('.ao-docstatus.bad').count();
+          if(badDocs!==1) throw new Error('Exactly one rejected PDF should be flagged without blocking the report, got '+badDocs);
           if(!text.includes('83,44')&&!text.includes('83.44')) throw new Error('Surface control missing');
           if(!text.replace(/[^0-9]/g,'').includes('1977')&&!text.replace(/[^0-9]/g,'').includes('1976')) throw new Error('Charges control missing');
 
