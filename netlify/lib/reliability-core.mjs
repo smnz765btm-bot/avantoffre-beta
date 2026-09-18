@@ -156,6 +156,74 @@ export function hardenScores(result){
   return result;
 }
 
+
+const frNumber=v=>{const s=String(v??'').replace(/\s/g,'').replace(',','.');const n=Number(s);return Number.isFinite(n)?n:null};
+const firstMatchNumber=(raw,re)=>{const m=String(raw||'').match(re);return m?frNumber(m[1]):null};
+const dpeClassFromValues=(surface,energy,ges)=>{
+  if(!(surface>40)||!(energy>=0)||!(ges>=0))return null;
+  const thresholds=[[70,6,'A'],[110,11,'B'],[180,30,'C'],[250,50,'D'],[330,70,'E'],[420,100,'F']];
+  for(const [e,g,label] of thresholds)if(energy<e&&ges<g)return label;
+  return 'G';
+};
+
+export function extractDeterministicFacts(docs=[]){
+  const list=Array.isArray(docs)?docs:[];
+  const diagnosticDocs=list.filter(d=>{const s=docSignal(d);return s.categories.diagnostics||/DIA|diagnostic/i.test(text(d?.name))});
+  const chargeDocs=list.filter(d=>{const s=docSignal(d);return s.categories.charges||/d[ée]compte|appel.*fonds/i.test(text(d?.name))});
+  const diag=diagnosticDocs.map(d=>text(d?.text)).join('\n');
+  const charges=chargeDocs.map(d=>text(d?.text)).join('\n');
+
+  const surface=
+    firstMatchNumber(diag,/(?:superficie|surface)\s*[«"']?\s*carrez\s*[»"']?\s*[:=]?\s*(\d{1,3}(?:[.,]\d{1,2})?)/i) ??
+    firstMatchNumber(diag,/surface\s+de\s+r[ée]f[ée]rence\s*[:=]?\s*(\d{1,3}(?:[.,]\d{1,2})?)/i);
+  const roomMatch=diag.match(/\b(?:Appartement\s+)?T([1-9])\b/i);
+  const rooms=roomMatch?Number(roomMatch[1]):null;
+  const floorMatch=diag.match(/(?:[ée]tage|etage)\s*[:=]?\s*(\d{1,2})(?:\s*[°ºeè])?/i);
+  const floor=floorMatch?`${Number(floorMatch[1])}e étage`:null;
+  const energyCostMatch=diag.match(/(?:entre|de)\s*(\d{2,5})\s*€\s*(?:et|à|a)\s*(\d{2,5})\s*€\s*(?:par\s+an|\/\s*an)/i);
+  const energyCostLow=energyCostMatch?frNumber(energyCostMatch[1]):null;
+  const energyCostHigh=energyCostMatch?frNumber(energyCostMatch[2]):null;
+
+  let energy=null,ges=null;
+  const perf=diag.match(/performance\s+[ée]nerg[ée]tique\s+et\s+climatique([\s\S]{0,1800}?)(?:estimation\s+des\s+co[uû]ts|informations\s+diagnostiqueur|\[PAGE|$)/i);
+  if(perf){
+    const nums=[...perf[1].matchAll(/\b(\d{1,3})\b/g)].map(m=>Number(m[1])).filter(Number.isFinite);
+    for(let i=0;i<nums.length-1;i++){
+      if(nums[i]>=20&&nums[i]<=700&&nums[i+1]>=0&&nums[i+1]<=150&&nums[i]>nums[i+1]*2){energy=nums[i];ges=nums[i+1];break}
+    }
+  }
+  const dpe=dpeClassFromValues(surface,energy,ges);
+
+  const annualCharges=
+    firstMatchNumber(charges,/total\s+des\s+charges\s+sur\s+cette\s+p[ée]riode[\s\S]{0,220}?(\d{3,6}(?:[.,]\d{2}))/i);
+  const individualBalance=firstMatchNumber(charges,/solde\s+d[ée]biteur\s+(\d{1,6}(?:[.,]\d{2}))/i);
+  const currentCall=firstMatchNumber(charges,/montant\s+de\s+l['’]?appel\s+de\s+fonds\s+(\d{1,6}(?:[.,]\d{2}))/i);
+  const totalToPay=firstMatchNumber(charges,/total\s+[àa]\s+payer\s+(\d{1,6}(?:[.,]\d{2}))/i);
+
+  return{
+    surface_m2:surface,rooms,floor,dpe,energy_consumption_kwh_m2:energy,ghg_kgco2_m2:ges,
+    energy_cost_low:energyCostLow,energy_cost_high:energyCostHigh,lot_annual_charges:annualCharges,
+    individual_balance:individualBalance,current_call_amount:currentCall,total_to_pay:totalToPay
+  };
+}
+
+export function applyDeterministicFacts(analysis,docs=[]){
+  const a=normalizeAnalysis(analysis),f=extractDeterministicFacts(docs);
+  if(f.surface_m2!==null)a.property.surface_m2=f.surface_m2;
+  if(f.rooms!==null)a.property.rooms=f.rooms;
+  if(f.floor)a.property.floor=f.floor;
+  if(f.dpe)a.property.dpe=f.dpe;
+  if(f.energy_consumption_kwh_m2!==null)a.property.energy_consumption_kwh_m2=f.energy_consumption_kwh_m2;
+  if(f.ghg_kgco2_m2!==null)a.property.ghg_kgco2_m2=f.ghg_kgco2_m2;
+  if(f.energy_cost_low!==null)a.property.energy_cost_low=f.energy_cost_low;
+  if(f.energy_cost_high!==null)a.property.energy_cost_high=f.energy_cost_high;
+  if(f.lot_annual_charges!==null)a.copro_metrics.lot_annual_charges=f.lot_annual_charges;
+  if(f.individual_balance!==null)a.copro_metrics.individual_balance=f.individual_balance;
+  if(f.current_call_amount!==null)a.copro_metrics.current_call_amount=f.current_call_amount;
+  if(f.total_to_pay!==null)a.copro_metrics.total_to_pay=f.total_to_pay;
+  return a;
+}
+
 function median(xs){const a=xs.filter(Number.isFinite).sort((x,y)=>x-y);if(!a.length)return null;const m=Math.floor(a.length/2);return a.length%2?a[m]:(a[m-1]+a[m])/2;}
 function percentile(xs,p){const a=xs.filter(Number.isFinite).sort((x,y)=>x-y);if(!a.length)return null;const i=(a.length-1)*p,lo=Math.floor(i),hi=Math.ceil(i);return a[lo]+(a[hi]-a[lo])*(i-lo);}
 
