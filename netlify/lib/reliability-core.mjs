@@ -446,15 +446,14 @@ export function deterministicScores(a,docs=[],marketMeta={}){
   if(ask&&lo&&hi&&lo<=hi){if(ask>=lo&&ask<=hi)market=84;else if(ask<lo)market=88;else market=clamp(Math.round(84-((ask-hi)/hi*100)*2.5),35,84)}
 
   const officialCount=Math.max(0,Number(marketMeta?.officialCount)||0);
-  const marketReliability=officialCount>=3?90:officialCount>=1?60:0;
   // Confidence describes the document analysis. Market availability is handled separately.
   const confidence=Math.round(documentation*.85+(coverage.readability||0)*.15);
 
-  const diagnostics=arr(a?.property?.diagnostics);
+  const diagnostics=arr(a?.property?.diagnostics),verifiedFacts=extractDeterministicFacts(docs);
   const propertyEvidence=Boolean(
-    num(a?.property?.surface_m2)!==null &&
-    num(a?.property?.rooms)!==null &&
-    text(a?.property?.dpe).trim() &&
+    verifiedFacts.surface_m2!==null &&
+    verifiedFacts.rooms!==null &&
+    verifiedFacts.dpe &&
     diagnostics.length>=2
   );
 
@@ -463,9 +462,18 @@ export function deterministicScores(a,docs=[],marketMeta={}){
   const strongAccounts=signals.some(s=>s.readability>=.9&&(s.categories.accounts||s.categories.synthese));
   const coproMetrics=a?.copro_metrics||{};
   const financeCoreCount=["annual_budget","collective_arrears","supplier_debt","cash","works_fund"].filter(k=>num(coproMetrics?.[k])!==null).length;
-  // A list of works or a charge statement alone cannot justify a reassuring copro score.
-  const coproEvidence=strongAg&&(strongAccounts||financeCoreCount>=2);
-  const marketEvidence=officialCount>=3&&lo!==null&&hi!==null&&lo<=hi;
+  // A charge statement or a document merely classified as "accounts" is not enough:
+  // at least two core collective financial metrics must actually be extracted.
+  const coproEvidence=strongAg&&financeCoreCount>=2;
+  const dvfRef=obj(a?.market?.dvf_reference);
+  const marketSampleCount=Math.max(officialCount,Number(dvfRef.sample_count)||0);
+  const dispersionRatio=num(dvfRef.dispersion_ratio);
+  const marketEvidence=
+    ask!==null &&
+    marketSampleCount>=8 &&
+    lo!==null&&hi!==null&&lo<=hi &&
+    text(a?.market?.confidence)!=='faible' &&
+    (dispersionRatio===null||dispersionRatio<=1.8);
 
   const propertyScore=propertyEvidence?property:null;
   const coproScore=coproEvidence?copro:null;
@@ -476,7 +484,7 @@ export function deterministicScores(a,docs=[],marketMeta={}){
   return{
     property:propertyScore,copro:coproScore,market:marketScore,documentation,confidence,overall,
     axes:{finance,works,governance,technical},coverage,
-    evidence_gate:{property:propertyEvidence,copro:coproEvidence,market:marketEvidence,finance_core_count:financeCoreCount,strong_ag:strongAg,strong_accounts:strongAccounts,official_count:officialCount}
+    evidence_gate:{property:propertyEvidence,copro:coproEvidence,market:marketEvidence,finance_core_count:financeCoreCount,strong_ag:strongAg,strong_accounts:strongAccounts,official_count:officialCount,market_sample_count:marketSampleCount,dispersion_ratio:dispersionRatio}
   };
 }
 
