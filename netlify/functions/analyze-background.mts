@@ -178,7 +178,7 @@ STYLE
 Retourne uniquement un objet JSON valide correspondant aux rubriques demandées.`;
 
     const schemaHint={
-      property:{title:"",address:"",asking_price:null,surface_m2:null,price_per_m2:null,rooms:null,floor:"",dpe:"",occupied:null,rent_excl_charges:null,charges_provision:null,assets:[],weaknesses:[],diagnostics:[],property_analysis:""},
+      property:{title:"",address:"",asking_price:null,surface_m2:null,price_per_m2:null,rooms:null,floor:"",dpe:"",energy_consumption_kwh_m2:null,ghg_kgco2_m2:null,energy_cost_low:null,energy_cost_high:null,occupied:null,rent_excl_charges:null,charges_provision:null,assets:[],weaknesses:[],diagnostics:[],property_analysis:""},
       market:{estimate_low:null,estimate_high:null,offer_low:null,offer_high:null,confidence:"faible|moyenne|bonne",positioning:"",comparables:[],analysis:""},
       copro_metrics:{annual_budget:null,collective_arrears:null,collective_arrears_ratio_pct:null,supplier_debt:null,supplier_debt_ratio_pct:null,cash:null,works_fund:null,works_fund_ratio_pct:null,lot_annual_charges:null,recoverable_charges:null},
       copro:{financial_analysis:"",governance_analysis:"",technical_analysis:"",recurring_topics:[],litigation:[],strengths:[],weaknesses:[]},
