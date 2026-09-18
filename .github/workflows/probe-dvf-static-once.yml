@@ -18,6 +18,8 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          echo "GEOCODE SEARCH"
+          curl -sS --max-time 15 'https://data.geopf.fr/geocodage/search/?q=26%20chemin%20de%20Borderouge%2031200%20Toulouse&limit=1' | jq '.features[0].properties'
           for Y in 2026 2025 2024 2023; do
             URL="https://files.data.gouv.fr/geo-dvf/latest/csv/$Y/communes/31/31555.csv"
             CODE=$(curl -L -sS --max-time 20 -o "/tmp/$Y.csv" -w '%{http_code}' "$URL")
