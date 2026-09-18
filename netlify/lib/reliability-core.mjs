@@ -178,6 +178,12 @@ export function deterministicScores(a,docs=[],marketMeta={}){
   if(ask&&lo&&hi&&lo<=hi){if(ask>=lo&&ask<=hi)market=84;else if(ask<lo)market=88;else market=clamp(Math.round(84-((ask-hi)/hi*100)*2.5),35,84)}
   const officialCount=Math.max(0,Number(marketMeta?.officialCount)||0),marketReliability=officialCount>=3?90:officialCount>=1?70:35;
   const confidence=Math.round(documentation*.75+marketReliability*.25);
-  const overall=docs.length>0&&documentation>=50?Math.round(property*.30+copro*.40+market*.30):null;
-  return{property,copro,market,documentation,confidence,overall,axes:{finance,works,governance,technical},coverage};
+  const propertyEvidence=Boolean(num(a?.property?.surface_m2)!==null||num(a?.property?.rooms)!==null||text(a?.property?.dpe)||arr(a?.property?.diagnostics).length||arr(a?.property?.assets).length);
+  const coproCategories=coverage.categories||{};
+  const coproEvidence=Boolean(coproCategories.ag||coproCategories.accounts||coproCategories.pppt||coproCategories.reglement||coproCategories.synthese||coproCategories.entretien);
+  const propertyScore=propertyEvidence?property:null;
+  const coproScore=coproEvidence?copro:null;
+  const marketScore=officialCount>0?market:null;
+  const overall=docs.length>0&&documentation>=50&&propertyScore!==null&&coproScore!==null&&marketScore!==null?Math.round(propertyScore*.30+coproScore*.40+marketScore*.30):null;
+  return{property:propertyScore,copro:coproScore,market:marketScore,documentation,confidence,overall,axes:{finance,works,governance,technical},coverage};
 }
