@@ -160,9 +160,10 @@ export function hardenScores(result){
 const frNumber=v=>{const s=String(v??'').replace(/\s/g,'').replace(',','.');const n=Number(s);return Number.isFinite(n)?n:null};
 const firstMatchNumber=(raw,re)=>{const m=String(raw||'').match(re);return m?frNumber(m[1]):null};
 const dpeClassFromValues=(surface,energy,ges)=>{
-  if(!(surface>40)||!(energy>=0)||!(ges>=0))return null;
+  const s=num(surface),eValue=num(energy),gValue=num(ges);
+  if(s===null||eValue===null||gValue===null||s<=40||eValue<0||gValue<0)return null;
   const thresholds=[[70,6,'A'],[110,11,'B'],[180,30,'C'],[250,50,'D'],[330,70,'E'],[420,100,'F']];
-  for(const [e,g,label] of thresholds)if(energy<=e&&ges<=g)return label;
+  for(const [e,g,label] of thresholds)if(eValue<=e&&gValue<=g)return label;
   return 'G';
 };
 
