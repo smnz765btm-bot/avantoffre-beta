@@ -14,30 +14,25 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 3
     steps:
-      - name: Inspect 299k DVF rows
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Compare JS DVF parser with CSV structure
         shell: bash
         run: |
           set -euo pipefail
           curl -sS --max-time 25 'https://files.data.gouv.fr/geo-dvf/latest/csv/2025/communes/31/31555.csv' -o /tmp/dvf.csv
-          python3 - <<'PY'
-          import csv, json, math
-          lat0,lon0=43.642529,1.456254
-          out=[]
-          with open('/tmp/dvf.csv',encoding='utf-8') as fh:
-              for r in csv.DictReader(fh):
-                  try:
-                      price=float(r['valeur_fonciere']); surf=float(r['surface_reelle_bati']); lat=float(r['latitude']); lon=float(r['longitude'])
-                  except:
-                      continue
-                  if r.get('type_local')!='Appartement' or price!=299000 or not (80<=surf<=90):
-                      continue
-                  dlat=math.radians(lat-lat0); dlon=math.radians(lon-lon0)
-                  a=math.sin(dlat/2)**2+math.cos(math.radians(lat0))*math.cos(math.radians(lat))*math.sin(dlon/2)**2
-                  dist=6371000*2*math.atan2(math.sqrt(a),math.sqrt(max(0,1-a)))
-                  out.append({
-                      'id_mutation':r.get('id_mutation'),'date':r.get('date_mutation'),'surface':surf,'rooms':r.get('nombre_pieces_principales'),
-                      'nombre_lots':r.get('nombre_lots'),'lat':lat,'lon':lon,'distance_m':round(dist),
-                      'lot1_surface_carrez':r.get('lot1_surface_carrez'),'lot2_surface_carrez':r.get('lot2_surface_carrez')
-                  })
-          print(json.dumps(out,ensure_ascii=False,indent=2))
-          PY
+          cp /tmp/dvf.csv ./dvf.csv
+          cat > ./inspect-dvf.mjs <<'JS'
+          import fs from 'node:fs';
+          import {parseStaticDvfCsv} from './netlify/lib/reliability-core.mjs';
+          const csv=fs.readFileSync('./dvf.csv','utf8');
+          const rows=parseStaticDvfCsv(csv,{lat:43.642529,lon:1.456254,maxDistanceM:1200,source:'data.gouv.fr — DVF Etalab'});
+          console.log(JSON.stringify({
+            total:rows.length,
+            suspicious:rows.filter(r=>r.valeurfonc===299000 && r.sbati>=80 && r.sbati<=90).slice(0,10),
+            nearest:rows.slice(0,10).map(r=>({price:r.valeurfonc,surface:r.sbati,date:r.datemut,distance_m:r.distance_m,address:r.address,id:r.id_mutation}))
+          },null,2));
+          JS
+          node ./inspect-dvf.mjs
