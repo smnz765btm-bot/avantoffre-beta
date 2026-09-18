@@ -12,13 +12,60 @@ body{background:#f7f9fa;color:var(--ao-text)}nav{height:76px;border-bottom:1px s
 .ao-location{display:grid;grid-template-columns:minmax(0,1.15fr) minmax(260px,.85fr);gap:12px;margin:0 0 12px}.ao-mapcard,.ao-nearby{background:#fff;border:1px solid #e2e9ec;border-radius:20px;overflow:hidden}.ao-maphead{display:flex;align-items:center;justify-content:space-between;padding:14px 16px 11px}.ao-maphead b,.ao-nearby h3{color:#0b314d;font-size:14px;margin:0}.ao-maphead span{font-size:9px;color:#80919b;text-transform:uppercase;letter-spacing:.05em;font-weight:800}.ao-mapframe{width:100%;height:235px;border:0;display:block;background:#eef3f5}.ao-mapfoot{display:flex;align-items:center;justify-content:space-between;padding:10px 14px;font-size:10px;color:#71848f}.ao-mapfoot a{color:#0a806b;font-weight:800;text-decoration:none}.ao-nearby{padding:15px 16px}.ao-nearby h3{margin-bottom:9px}.ao-nearlist{display:grid;gap:7px}.ao-nearitem{display:grid;grid-template-columns:28px 1fr auto;gap:9px;align-items:center;padding:8px 0;border-bottom:1px solid #edf1f2}.ao-nearitem:last-child{border-bottom:0}.ao-nearicon{width:28px;height:28px;border-radius:9px;background:#eef8f5;color:#0b806b;display:grid;place-items:center;font-size:11px;font-weight:900}.ao-nearitem b{display:block;color:#173a50;font-size:11px}.ao-nearitem small{display:block;color:#80919b;font-size:9.5px;margin-top:1px}.ao-neartime{font-size:10px;color:#4f6878;white-space:nowrap}.ao-location-note{grid-column:1/-1;background:#eef8f5;border:1px solid #dcefe9;border-radius:13px;padding:10px 13px;color:#426a61;font-size:10.5px;line-height:1.4}.ao-location-loading{padding:18px;color:#71848f;font-size:11px}.ao-location-empty{color:#71848f;font-size:10.5px;line-height:1.4}
 @media(max-width:900px){.ao-location{grid-template-columns:1fr}.ao-mapframe{height:210px}.hero{padding:40px 0}.hero h1{font-size:37px}.workspace{grid-template-columns:1fr}.scoreGrid.simplifiedScores,.reportHero{grid-template-columns:1fr}.ao-docstatus{min-width:120px;max-width:160px}.ao-docreason{font-size:9px}.reportHero{text-align:center}.reportCard{padding:17px}.tabs{overflow:auto;flex-wrap:nowrap}.tab{min-width:max-content}}
 `;document.head.appendChild(st);
-function setupAddress(){const input=document.querySelector('#address');if(!input||input.dataset.autocompleteReady)return;input.dataset.autocompleteReady='1';const wrap=document.createElement('div');wrap.className='addressWrap';input.parentNode.insertBefore(wrap,input);wrap.appendChild(input);const box=document.createElement('div');box.className='addressSuggest';wrap.appendChild(box);let timer,controller,items=[];const close=()=>box.classList.remove('show');const choose=i=>{if(!items[i])return;input.value=items[i].label;close()};input.autocomplete='off';input.addEventListener('input',()=>{clearTimeout(timer);if(controller)controller.abort();const q=input.value.trim();if(q.length<3)return close();timer=setTimeout(async()=>{controller=new AbortController();try{const r=await fetch('/api/address-suggest?q='+encodeURIComponent(q),{signal:controller.signal,cache:'no-store'});const d=await r.json();items=Array.isArray(d.suggestions)?d.suggestions:[];box.innerHTML=items.map((x,i)=>`<div class="addressOption" data-i="${i}">${esc(x.label)}</div>`).join('')+(items.length?'<div class="addressSource">Base Adresse Nationale / IGN</div>':'');box.classList.toggle('show',!!items.length);box.querySelectorAll('.addressOption').forEach(el=>el.onmousedown=e=>{e.preventDefault();choose(+el.dataset.i)})}catch(e){close()}},250)});input.addEventListener('blur',()=>setTimeout(close,120))}
+const aoGeoCache=new Map();
+async function aoGeoSuggest(query,signal){
+  const q=String(query||'').trim();if(q.length<3)return[];
+  const key=q.toLowerCase();if(aoGeoCache.has(key))return aoGeoCache.get(key);
+  const target=new URL('https://data.geopf.fr/geocodage/completion/');
+  target.searchParams.set('text',q);target.searchParams.set('type','StreetAddress');target.searchParams.set('maximumResponses','6');
+  const r=await fetch(target.toString(),{signal,headers:{Accept:'application/json'}});
+  if(!r.ok)throw new Error('Géocodage indisponible');
+  const d=await r.json(),rows=Array.isArray(d?.results)?d.results:[];
+  const items=rows.map(x=>({label:String(x?.fulltext||x?.label||'').trim(),city:String(x?.city||'').trim(),postcode:String(x?.zipcode||x?.postalcode||'').trim(),lon:Number.isFinite(Number(x?.x))?Number(x.x):null,lat:Number.isFinite(Number(x?.y))?Number(x.y):null})).filter(x=>x.label).slice(0,6);
+  aoGeoCache.set(key,items);if(aoGeoCache.size>30)aoGeoCache.delete(aoGeoCache.keys().next().value);
+  return items;
+}
+function setupAddress(){
+  const input=document.querySelector('#address');if(!input||input.dataset.autocompleteReady)return;input.dataset.autocompleteReady='1';
+  const wrap=document.createElement('div');wrap.className='addressWrap';input.parentNode.insertBefore(wrap,input);wrap.appendChild(input);
+  const box=document.createElement('div');box.className='addressSuggest';wrap.appendChild(box);
+  let timer,controller,items=[];const close=()=>box.classList.remove('show');const choose=i=>{if(!items[i])return;input.value=items[i].label;close()};
+  input.autocomplete='off';
+  input.addEventListener('input',()=>{clearTimeout(timer);if(controller)controller.abort();const q=input.value.trim();if(q.length<3)return close();timer=setTimeout(async()=>{controller=new AbortController();try{items=await aoGeoSuggest(q,controller.signal);box.innerHTML=items.map((x,i)=>`<div class="addressOption" data-i="${i}">${esc(x.label)}</div>`).join('')+(items.length?'<div class="addressSource">IGN / Géoplateforme</div>':'');box.classList.toggle('show',!!items.length);box.querySelectorAll('.addressOption').forEach(el=>el.onmousedown=e=>{e.preventDefault();choose(+el.dataset.i)})}catch{close()}},450)});
+  input.addEventListener('blur',()=>setTimeout(close,120));
+}
 const readState=new Map();const isPv=name=>/\b(pv|ag)\b|assembl/i.test(name||'');function rows(){return [...document.querySelectorAll('#filesList .file')]}function fileNamesFromRows(){return rows().map(r=>r.querySelector('.fileName')?.textContent||'document')}
 function reasonFor(status,error,chars){const e=String(error||'').toLowerCase();if(status===413||e.includes('volumineux'))return{reason:'Fichier trop volumineux',solution:'Scindez le PDF puis réimportez-le.',kind:'warn'};if(e.includes('password')||e.includes('mot de passe')||e.includes('encrypted'))return{reason:'PDF protégé',solution:'Enregistrez-le sans mot de passe puis réimportez-le.',kind:'bad'};if(Number(chars)<80)return{reason:e.includes('partielle')?'Lecture partielle après seconde lecture':'Lecture insuffisante après seconde lecture',solution:e.includes('partielle')?'Certaines pages restent difficiles à exploiter. Fournissez si possible le PDF natif ou une version plus nette.':'AvantOffre a tenté une seconde lecture OCR sans obtenir assez de contenu fiable. Fournissez une version non protégée ou plus nette.',kind:e.includes('partielle')?'warn':'bad'};if(status>=400)return{reason:'Échec de traitement',solution:'Réenregistrez le document en PDF standard.',kind:'bad'};return{reason:'Non lisible',solution:'Réenregistrez-le en PDF standard ou appliquez un OCR.',kind:'bad'}}
 function setRowStatus(i,state){const row=rows()[i];if(!row)return;let box=row.querySelector('.ao-docstatus');if(!box){box=document.createElement('div');box.className='ao-docstatus';const remove=row.querySelector('button');remove?row.insertBefore(box,remove):row.appendChild(box)}if(!state){box.className='ao-docstatus wait';box.innerHTML='<span class="ao-dot">·</span><span>En attente</span>';return}if(state.status==='ok'){box.className='ao-docstatus ok';box.innerHTML='<span class="ao-dot">✓</span><span>Traité</span>';return}const kind=state.kind==='warn'?'warn':'bad';box.className='ao-docstatus '+kind;box.innerHTML=`<span class="ao-dot">${kind==='warn'?'!':'×'}</span><span>${esc(state.reason)}<small class="ao-docreason">${esc(state.solution)}</small></span>`}function renderFileStates(){rows().forEach((_,i)=>setRowStatus(i,readState.get(i)))}
-function installUploadMonitor(){if(window.__aoUploadMonitor)return;window.__aoUploadMonitor=true;const nativeFetch=window.fetch.bind(window);window.fetch=async(input,init)=>{const url=typeof input==='string'?input:(input?.url||'');let meta=null;if(url.includes('/api/upload-document')){try{const b=JSON.parse(String(init?.body||'{}'));meta={name:String(b.name||'document'),index:Number(b.index)}}catch{}}try{const res=await nativeFetch(input,init);if(meta){let data={};try{data=await res.clone().json()}catch{};const actualChars=Number(data?.actualChars??data?.chars??0),quality=String(data?.quality||'');if(res.ok&&quality==='partial'){readState.set(meta.index,{name:meta.name,status:'failed',reason:'Lecture partielle',solution:'Le document reste exploitable ; certaines pages sont moins lisibles.',kind:'warn',chars:actualChars})}else if(res.ok&&actualChars>=80){readState.set(meta.index,{name:meta.name,status:'ok',chars:actualChars})}else if(res.ok){readState.set(meta.index,{name:meta.name,status:'failed',...reasonFor(res.status,data?.error,actualChars),chars:actualChars})}else readState.set(meta.index,{name:meta.name,status:'failed',...reasonFor(res.status,data?.error,actualChars)});setRowStatus(meta.index,readState.get(meta.index));renderReadWarnings()}return res}catch(err){if(meta){readState.set(meta.index,{name:meta.name,status:'failed',...reasonFor(500,err?.message,0)});setRowStatus(meta.index,readState.get(meta.index));renderReadWarnings()}throw err}}
+function installUploadMonitor(){
+  if(window.__aoUploadMonitor)return;window.__aoUploadMonitor=true;const nativeFetch=window.fetch.bind(window);
+  window.fetch=async(input,init)=>{
+    const url=typeof input==='string'?input:(input?.url||'');let metas=[];
+    if(url.includes('/api/upload-document')){
+      try{const b=JSON.parse(String(init?.body||'{}'));const docs=Array.isArray(b?.documents)?b.documents:[b];metas=docs.map(x=>({name:String(x?.name||'document'),index:Number(x?.index)})).filter(x=>Number.isFinite(x.index))}catch{}
+    }
+    try{
+      const res=await nativeFetch(input,init);
+      if(metas.length){
+        let data={};try{data=await res.clone().json()}catch{}
+        const results=Array.isArray(data?.documents)?data.documents:[];
+        for(const meta of metas){
+          const item=results.find(x=>Number(x?.index)===meta.index)||data;
+          const actualChars=Number(item?.actualChars??item?.chars??0),quality=String(item?.quality||'');
+          if(res.ok&&quality==='partial')readState.set(meta.index,{name:meta.name,status:'failed',reason:'Lecture partielle',solution:'Le document reste exploitable ; certaines pages sont moins lisibles.',kind:'warn',chars:actualChars});
+          else if(res.ok&&actualChars>=80)readState.set(meta.index,{name:meta.name,status:'ok',chars:actualChars});
+          else readState.set(meta.index,{name:meta.name,status:'failed',...reasonFor(res.status,item?.error||data?.error,actualChars),chars:actualChars});
+          setRowStatus(meta.index,readState.get(meta.index));
+        }
+        renderReadWarnings();
+      }
+      return res;
+    }catch(err){
+      for(const meta of metas){readState.set(meta.index,{name:meta.name,status:'failed',...reasonFor(500,err?.message,0)});setRowStatus(meta.index,readState.get(meta.index))}
+      renderReadWarnings();throw err;
+    }
+  }
 }
-function failures(includeMissing=false){const names=fileNamesFromRows(),out=[];names.forEach((name,i)=>{const s=readState.get(i);if(s?.status==='failed')out.push({...s,index:i});else if(includeMissing&&!s)out.push({name,index:i,status:'failed',reason:'Fichier non traité',solution:'Réimportez le document puis relancez l’analyse.',kind:'bad'})});return out}
 function warningHtml(list,forReport=false){if(!list.length)return'';const partialOnly=list.every(x=>x.kind==='warn');const critical=list.some(x=>isPv(x.name));const title=partialOnly?'⚠ Lecture partielle de certains documents':critical?'⚠ PV d’AG non exploitable : analyse copropriété incomplète':'⚠ Certains documents n’ont pas pu être exploités';return `<div class="ao-readalert ${critical?'critical':''} ${forReport?'report':''}"><strong>${title}</strong><ul>${list.map(x=>`<li><span class="ao-file">${esc(x.name)}</span> — ${esc(x.reason)} <span class="ao-solution">${esc(x.solution)}</span></li>`).join('')}</ul>${critical?'<span class="ao-solution"><b>Important :</b> seules les informations effectivement lisibles sont prises en compte dans les conclusions copropriété.</span>':''}</div>`}
 function renderReadWarnings(final=false){
   const list=failures(final),html=warningHtml(list,false);
@@ -43,7 +90,6 @@ function reportScope(){const report=document.querySelector('#report');if(!report
 function compact(){document.querySelectorAll('#report .pane:not(#detail) .reportCard>.summary').forEach(p=>{if(p.dataset.compacted||p.textContent.trim().length<240)return;p.dataset.compacted='1';p.classList.add('ao-clamped');const b=document.createElement('button');b.className='ao-readmore';b.textContent='Voir le détail';b.onclick=()=>{const o=p.classList.toggle('ao-clamped');b.textContent=o?'Voir le détail':'Réduire'};p.after(b)})}
 
 let aoLocationBusy=false;
-const aoCatIcon=c=>c==='Commerces'?'C':c==='Écoles'?'É':c==='Transports'?'T':c==='Santé'?'+':'V';
 async function addLocationBlock(){
   const report=document.querySelector('#report'),overview=document.querySelector('#overview');
   if(!report||report.classList.contains('hidden')||!overview||overview.querySelector('#aoLocation')||aoLocationBusy)return;
@@ -52,16 +98,14 @@ async function addLocationBlock(){
   const holder=document.createElement('div');holder.id='aoLocation';holder.className='ao-location';holder.innerHTML='<div class="ao-mapcard"><div class="ao-location-loading">Localisation en cours…</div></div>';
   const first=overview.querySelector('.reportCard');first?first.after(holder):overview.prepend(holder);
   try{
-    const gr=await fetch('/api/address-suggest?q='+encodeURIComponent(address),{cache:'no-store'}),gd=await gr.json(),g=Array.isArray(gd?.suggestions)?gd.suggestions[0]:null;
+    const suggestions=await aoGeoSuggest(address),g=suggestions[0];
     if(!g||!Number.isFinite(Number(g.lat))||!Number.isFinite(Number(g.lon)))throw new Error('Adresse non localisée');
     const lat=Number(g.lat),lon=Number(g.lon),padLat=.006,padLon=.009;
-    let nearby=[];try{const nr=await fetch(`/api/nearby?lat=${encodeURIComponent(lat)}&lon=${encodeURIComponent(lon)}`,{cache:'no-store'}),nd=await nr.json();nearby=Array.isArray(nd?.nearby)?nd.nearby:[]}catch{}
     const bbox=[lon-padLon,lat-padLat,lon+padLon,lat+padLat].join('%2C');
     const map=`https://www.openstreetmap.org/export/embed.html?bbox=${bbox}&layer=mapnik&marker=${encodeURIComponent(lat)}%2C${encodeURIComponent(lon)}`;
     const open=`https://www.openstreetmap.org/?mlat=${encodeURIComponent(lat)}&mlon=${encodeURIComponent(lon)}#map=16/${encodeURIComponent(lat)}/${encodeURIComponent(lon)}`;
-    const items=nearby.slice(0,5).map(x=>`<div class="ao-nearitem"><span class="ao-nearicon">${aoCatIcon(x.category)}</span><span><b>${esc(x.category)}</b><small>${esc(x.name)}</small></span><span class="ao-neartime">${Number.isFinite(Number(x.walk_min))?esc(x.walk_min)+' min à pied':esc(x.distance_m)+' m'}</span></div>`).join('');
-    holder.innerHTML=`<div class="ao-mapcard"><div class="ao-maphead"><b>Localisation</b><span>Autour du bien</span></div><iframe class="ao-mapframe" loading="lazy" title="Carte du quartier" src="${map}"></iframe><div class="ao-mapfoot"><span>${esc(address)}</span><a href="${open}" target="_blank" rel="noopener">Voir la carte ↗</a></div></div><div class="ao-nearby"><h3>À proximité</h3>${items?`<div class="ao-nearlist">${items}</div>`:'<div class="ao-location-empty">Les informations de proximité ne sont pas disponibles pour le moment.</div>'}</div><div class="ao-location-note">Repères indicatifs autour de l’adresse : ils donnent un aperçu pratique du quartier sans remplacer vos propres critères de proximité.</div>`;
-  }catch(e){holder.remove()}finally{aoLocationBusy=false}
+    holder.innerHTML=`<div class="ao-mapcard"><div class="ao-maphead"><b>Localisation</b><span>Autour du bien</span></div><iframe class="ao-mapframe" loading="lazy" title="Carte du quartier" src="${map}"></iframe><div class="ao-mapfoot"><span>${esc(address)}</span><a href="${open}" target="_blank" rel="noopener">Voir la carte ↗</a></div></div><div class="ao-location-note">Carte indicative issue d’OpenStreetMap. Les services de proximité détaillés ne sont chargés qu’en dehors du moteur ReVisite afin de préserver les ressources d’analyse.</div>`;
+  }catch{holder.remove()}finally{aoLocationBusy=false}
 }
 
 function polish(){simplifyScores();softenVigilance();reportScope();compact();addLocationBlock();if(!document.querySelector('#report')?.classList.contains('hidden'))renderReadWarnings(false)}
