@@ -180,7 +180,7 @@ export function extractDeterministicFacts(docs=[]){
   const rooms=roomMatch?Number(roomMatch[1]):null;
   const floorMatch=diag.match(/(?:[ée]tage|etage)\s*[:=]?\s*(\d{1,2})(?:\s*[°ºeè])?/i);
   const floor=floorMatch?`${Number(floorMatch[1])}e étage`:null;
-  const energyCostMatch=diag.match(/(?:entre|de)\s*(\d{2,5})\s*€\s*(?:et|à|a)\s*(\d{2,5})\s*€\s*(?:par\s+an|\/\s*an)/i);
+  const energyCostMatch=diag.match(/(?:entre|de)\s*(\d{2,5}(?:\s\d{3})?)\s*€\s*(?:et|à|a)\s*(\d{1,3}(?:\s\d{3})?)\s*€\s*(?:par\s+an|\/\s*an)/i);
   const energyCostLow=energyCostMatch?frNumber(energyCostMatch[1]):null;
   const energyCostHigh=energyCostMatch?frNumber(energyCostMatch[2]):null;
 
