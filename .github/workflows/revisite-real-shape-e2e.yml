@@ -1,5 +1,5 @@
 name: ReVisite real-shape browser E2E
-# final production verification v6
+# final production verification v7
 
 on:
   push:
@@ -137,7 +137,9 @@ jobs:
           },null,{timeout:600000});
           await page.waitForTimeout(1500);
           const warningCount=await page.locator('#report .ao-readalert.report').count();
-          if(warningCount!==1) throw new Error('Nombre de blocs lecture partielle incorrect: '+warningCount);
+          const scopeCount=await page.locator('#report #aoScope').count();
+          if(warningCount!==0) throw new Error('Alertes documentaires dupliquées dans le rapport: '+warningCount);
+          if(scopeCount!==1) throw new Error('Le périmètre documentaire doit apparaître une seule fois: '+scopeCount);
           const text=(await page.locator('#report').innerText()).toLowerCase();
           console.log('REPORT',text.slice(0,12000));
           if(!text.includes('83,44')&&!text.includes('83.44')) throw new Error('Surface 83,44 absente du rapport');
