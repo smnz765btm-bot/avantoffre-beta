@@ -15,7 +15,7 @@ assert.equal(empty.market,null,'Le marché ne doit pas être scoré sans compara
 
 const fakeDocs=[
  {name:'pv.pdf',quality:'ok',pages:6,weakPages:0,text:('PROCÈS-VERBAL ASSEMBLÉE GÉNÉRALE. Approbation des comptes. Budget prévisionnel. '+ 'dépenses tantièmes résolution '.repeat(1500))},
- {name:'diag.pdf',quality:'ok',pages:20,weakPages:0,text:('Diagnostic de performance énergétique DPE. Installation intérieure d’électricité. '+ 'consommation énergie anomalie logement '.repeat(1500))},
+ {name:'diag.pdf',quality:'ok',pages:20,weakPages:0,text:('Appartement T4. Superficie Carrez : 82 m². Diagnostic de performance énergétique DPE : C. Installation intérieure d’électricité. '+ 'consommation énergie anomalie logement '.repeat(1500))},
  {name:'charges.pdf',quality:'ok',pages:3,weakPages:0,text:('DÉCOMPTE DE CHARGES. Total des charges du lot. '+ 'quote-part provisions locatif '.repeat(1000))},
  {name:'pppt.pdf',quality:'partial',pages:30,weakPages:3,text:('Projet de plan pluriannuel de travaux PPPT. '+ 'travaux estimation échéance '.repeat(800))},
  {name:'reglement.pdf',quality:'ok',pages:50,weakPages:0,text:('Règlement de copropriété et état descriptif de division. '+ 'lot tantièmes parties communes '.repeat(1200))}
@@ -26,8 +26,8 @@ const scored=deterministicScores({
  risk_flags:{},
  copro_metrics:{annual_budget:140000,collective_arrears:5000,cash:45000,works_fund:30000},
  property:{asking_price:200000,surface_m2:82,rooms:4,dpe:'C',diagnostics:['Électricité conforme au rapport','DPE C']},
- market:{estimate_low:190000,estimate_high:210000}
-},fakeDocs,{officialCount:4});
+ market:{estimate_low:190000,estimate_high:210000,confidence:'bonne',dvf_reference:{sample_count:20,dispersion_ratio:1.3}}
+},fakeDocs,{officialCount:5});
 assert.ok(scored.overall!==null,'Le score global est autorisé lorsque la couverture est suffisante');
 assert.ok(scored.confidence>=scored.documentation*.7,'La confiance doit suivre principalement la qualité documentaire');
 
@@ -103,6 +103,38 @@ assert.equal(factual.property.surface_m2,83.44,'Les faits documentaires détermi
 assert.equal(factual.property.dpe,'B');
 assert.equal(factual.copro_metrics.individual_balance,110.25);
 
+const ocrLikeDpeDoc=[{
+ name:'ANDRE_DPE_ET_ERNT_B25.pdf',quality:'partial',pages:18,weakPages:3,
+ text:`[PAGE 5 | OCR]
+Diagnostic de performance énergétique
+logement extrêmement performant
+Consommation énergie primaire 106 kWh/m²/an
+Émissions de gaz à effet de serre 3 kg CO2/m²/an
+Estimation des coûts annuels d'énergie entre 890 € et 1 240 € par an
+Appartement T4 — Superficie Carrez : 83,44 m² — Etage : 2`
+}];
+const ocrFacts=extractDeterministicFacts(ocrLikeDpeDoc);
+assert.equal(ocrFacts.dpe,'B','Le DPE graphique OCRisé doit être recalculé B à partir de 106/3');
+assert.equal(ocrFacts.energy_consumption_kwh_m2,106);
+assert.equal(ocrFacts.ghg_kgco2_m2,3);
+const correctedDpe=applyDeterministicFacts({property:{surface_m2:83.44,rooms:4,dpe:'A'},copro_metrics:{}},ocrLikeDpeDoc);
+assert.equal(correctedDpe.property.dpe,'B','Un DPE IA erroné doit être écrasé par les valeurs OCR vérifiables');
+const unverifiedDpe=applyDeterministicFacts({property:{surface_m2:83.44,rooms:4,dpe:'A'},copro_metrics:{}},[
+ {name:'diagnostics.pdf',quality:'partial',pages:4,weakPages:2,text:'Diagnostic de performance énergétique illisible. Appartement T4. Superficie Carrez : 83,44 m².'}
+]);
+assert.equal(unverifiedDpe.property.dpe,null,'Un DPE non vérifiable ne doit pas conserver une classe devinée par le modèle');
+
+const strongAccountsWithoutMetricsDocs=[
+ {name:'PV_AG_2026.pdf',quality:'ok',pages:8,weakPages:0,text:('PROCÈS-VERBAL ASSEMBLÉE GÉNÉRALE approbation comptes budget résolution '.repeat(500))},
+ {name:'FICHE_SYNTHESE_COPRO.pdf',quality:'ok',pages:3,weakPages:0,text:('Fiche synthétique copropriété comptes budget syndic '.repeat(600))},
+ ...ocrLikeDpeDoc
+];
+const noFinanceScore=deterministicScores({
+ risk_flags:{},property:{surface_m2:83.44,rooms:4,dpe:'B',diagnostics:['DPE B','Électricité']},
+ copro_metrics:{lot_annual_charges:1976.66},market:{estimate_low:180000,estimate_high:220000,confidence:'bonne',dvf_reference:{sample_count:20,dispersion_ratio:1.2}}
+},strongAccountsWithoutMetricsDocs,{officialCount:5});
+assert.equal(noFinanceScore.copro,null,'Une fiche comptes sans métriques financières collectives extraites ne doit pas produire de score copropriété');
+
 const withheld={scores:{property:82,copro:95,market:null,documentation:67,confidence:59,overall:null},meta:{score_withheld:true}};
 hardenScores(withheld);
 assert.equal(withheld.scores.overall,null,'Un score global retenu doit rester N/C et ne jamais devenir 0');
@@ -155,6 +187,23 @@ assert.equal(market.market.offer_low,null,'Aucun montant d’offre automatique n
 assert.equal(market.market.offer_high,null,'Aucun montant d’offre automatique ne doit survivre au recalage DVF');
 assert.ok(market.market.analysis.includes('ventes DVF officielles'),'Le commentaire marché doit être recalculé à partir des ventes vérifiées');
 assert.ok(!market.market.analysis.includes('contradictoire'),'Le commentaire IA contradictoire doit être écrasé');
+
+const bimodalPms=[1844,1950,1948,2182,2451,2513,2531,2557,2699,3295,3518,3560,2400,2600,2300];
+const bimodalCandidates=bimodalPms.map((pm,i)=>({
+ valeurfonc:Math.round(pm*83),sbati:83,libtypbien:'APPARTEMENT',codtypbien:'121',datemut:`2025-${String((i%12)+1).padStart(2,'0')}-15`,
+ distance_m:50+i*30,rooms:4,id_mutation:`b-${i}`,source:'data.gouv.fr — DVF Etalab',address:`${i+1} RUE TEST`
+}));
+const robustMarket=applyOfficialMarketData({property:{surface_m2:83.44,rooms:4,title:'Appartement T4'},market:{}},bimodalCandidates);
+assert.equal(robustMarket.market.dvf_reference.sample_count,15,'Le marché doit utiliser un échantillon élargi, pas seulement cinq ventes');
+assert.ok(robustMarket.market.estimate_high/robustMarket.market.estimate_low<1.4,'Une dispersion bimodale ne doit pas créer une fourchette inutilisable');
+assert.ok(robustMarket.market.estimate_high<250000,'Les ventes hautes doivent rester du contexte et ne pas étirer la borne centrale');
+assert.equal(robustMarket.market.confidence,'moyenne','Une forte dispersion doit abaisser la confiance marché');
+const noAskingMarketScore=deterministicScores({
+ risk_flags:{},property:{surface_m2:83.44,rooms:4,dpe:'B',diagnostics:['DPE B','Électricité']},
+ copro_metrics:{annual_budget:100000,collective_arrears:3000},
+ market:robustMarket.market
+},[...fakeDocs],{officialCount:5});
+assert.equal(noAskingMarketScore.market,null,'Sans prix affiché à comparer, le marché ne doit pas recevoir de score');
 
 const mixedUpload=partitionUploadDocuments([
  {index:0,name:'diagnostics.pdf',text:'Diagnostic exploitable. '.repeat(20),quality:'ok',pages:3},
