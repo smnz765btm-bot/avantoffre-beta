@@ -202,18 +202,22 @@ Retourne uniquement un objet JSON valide correspondant aux rubriques demandées.
     const buildUser=(preparedDocs:any[],compact=false)=>`ADRESSE DU BIEN:\n${address||"non fournie"}\n\nURL ANNONCE:\n${listingUrl||"non fournie"}\n\nINFORMATIONS COMPLÉMENTAIRES:\n${extra||"aucune"}\n\nVENTES DVF+ OFFICIELLES DU SECTEUR (CANDIDATS BRUTS À FILTRER SELON LE BIEN):\n${officialDvf}\n\nSTRUCTURE JSON ATTENDUE:\n${jsonText(schemaHint)}\n\n${compact?"MODE DE SECOURS COMPACT : sois particulièrement concis et priorise les montants, décisions d’AG, diagnostics, charges, travaux et incohérences.\n\n":""}DOCUMENTS EXTRAITS:\n${preparedDocs.map((d:any,i:number)=>`\n--- DOCUMENT ${i+1}: ${d.name} | pages=${d.pages??"?"} | lecture=${d.quality||"non qualifiée"} | caractères transmis=${d.chars_transmitted}/${d.chars_source}${d.truncated?" | ÉCHANTILLONNÉ":""} ---\n${d.text}`).join("\n")}`;
 
     let data:any=null,parsed:any=null,totalUsage:any=null,modelAttempts=0,fallbackCompaction=false,lastError:any=null;
-    for(let attempt=1;attempt<=2;attempt++){
+    for(let attempt=1;attempt<=3;attempt++){
       modelAttempts=attempt;
       if(attempt===2){
         prepared=prepareDocs(docs,{maxTotal:180000,maxDoc:30000});
         preparedChars=prepared.reduce((s:number,d:any)=>s+(Number(d.chars_transmitted)||0),0);
         fallbackCompaction=true;
+      }else if(attempt===3){
+        prepared=prepareDocs(docs,{maxTotal:100000,maxDoc:18000});
+        preparedChars=prepared.reduce((s:number,d:any)=>s+(Number(d.chars_transmitted)||0),0);
+        fallbackCompaction=true;
       }
-      const user=buildUser(prepared,attempt===2);
+      const user=buildUser(prepared,attempt>=2);
       const payload:any={
         model,input:[{role:"system",content:[{type:"input_text",text:system}]},{role:"user",content:[{type:"input_text",text:user}]}],
-        tools:listingUrl?[{type:"web_search"}]:[],reasoning:{effort:"low"},max_output_tokens:12000,
-        text:{format:{type:"json_object"},verbosity:"low"},store:false,prompt_cache_key:"revisite-analysis-v4"
+        tools:attempt===1&&listingUrl?[{type:"web_search"}]:[],reasoning:{effort:"low"},max_output_tokens:attempt===1?12000:attempt===2?8000:6000,
+        text:{format:{type:"json_object"},verbosity:"low"},store:false,prompt_cache_key:"revisite-analysis-v5"
       };
       try{
         const rsp=await fetchWithTimeout("https://api.openai.com/v1/responses",{method:"POST",headers:{Authorization:`Bearer ${apiKey}`,"Content-Type":"application/json"},body:JSON.stringify(payload)});
@@ -234,24 +238,27 @@ Retourne uniquement un objet JSON valide correspondant aux rubriques demandées.
         lastError=err;
         const msg=String(err?.message||"");
         const status=Number(err?.status)||0;
-        const canRetry=attempt===1&&(retryableModelFailure(msg)||status>=500);
+        const canRetry=attempt<3&&status!==401&&status!==403;
         if(!canRetry)break;
       }
     }
-    if(lastError||!parsed)throw lastError||new Error("Aucun rapport exploitable.");
-    let analysis=normalizeAnalysis(parsed);
+    const degradedMode=Boolean(lastError||!parsed);
+    let analysis=degradedMode?basicFallbackAnalysis(docs,address):normalizeAnalysis(parsed);
     if(address)analysis.property.address=address;
     analysis=applyOfficialMarketData(analysis,dvf.candidates||[]);
     const p=analysis.property||{};
     if(p.asking_price&&p.surface_m2&&!p.price_per_m2)p.price_per_m2=Math.round(Number(p.asking_price)/Number(p.surface_m2));
     const officialCount=Array.isArray(analysis?.market?.comparables)?analysis.market.comparables.filter((x:any)=>x?.type==="DVF").length:0;
     const scores=deterministicScores(analysis,docs,{officialCount});
+    if(degradedMode){
+      scores.property=null;scores.copro=null;scores.market=null;scores.overall=null;scores.confidence=Math.min(Number(scores.confidence)||0,35);
+    }
     await recordUsage(store,totalUsage);
 
     const result={analysis,scores,meta:{
       model,document_count:docs.length,beta:true,generated_at:new Date().toISOString(),
       input_chars:preparedChars,dvf_status:dvf.status,dvf_source:dvf.source||null,dvf_candidate_count:Array.isArray(dvf.candidates)?dvf.candidates.length:0,
-      dvf_cache_hit:Boolean(dvf.cache_hit),usage:totalUsage||null,model_attempts:modelAttempts,fallback_compaction:fallbackCompaction,score_withheld:scores.overall===null,cache_hit:false
+      dvf_cache_hit:Boolean(dvf.cache_hit),usage:totalUsage||null,model_attempts:modelAttempts,fallback_compaction:fallbackCompaction,degraded_mode:degradedMode,score_withheld:scores.overall===null,cache_hit:false
     }};
     await store.setJSON(jobId,{status:"done",result,expires_at:expiresIn(1000*60*60*3)});
     if(cacheKey.startsWith("analysis-cache-")){
