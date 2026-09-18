@@ -1,6 +1,6 @@
 import type { Context, Config } from "@netlify/functions";
 import { jobStore, expiresIn, isExpired } from "../lib/storage.mjs";
-import { prepareDocs, normalizeAnalysis, applyOfficialMarketData, deterministicScores, num } from "../lib/reliability-core.mjs";
+import { prepareDocs, normalizeAnalysis, applyOfficialMarketData, deterministicScores, hardenScores, num } from "../lib/reliability-core.mjs";
 
 type Doc={name:string;text:string;pages?:number;chars?:number;quality?:string;ocrPages?:number;weakPages?:number;pageStats?:any[]};
 
@@ -136,6 +136,7 @@ export default async(req:Request,_context:Context)=>{
     const apiKey=getOpenAIKey(),model=Netlify.env.get("OPENAI_MODEL")||"gpt-5.6-luna";
     if(!apiKey)throw new Error("La clé OpenAI n'est pas configurée.");
     const listingUrl=String(body?.listingUrl||"").trim().slice(0,1200),address=String(body?.address||"").trim().slice(0,300),docs:Doc[]=Array.isArray(body?.documents)?body.documents.slice(0,30):[],extra=String(body?.extra||"").slice(0,7000),cacheKey=String(body?.cacheKey||"").slice(0,100);
+    const documentIssues=Array.isArray(body?.documentIssues)?body.documentIssues.slice(0,30).map((x:any)=>({name:String(x?.name||"document").slice(0,240),reason:String(x?.reason||"Non exploitable").slice(0,300)})):[];
     if(!listingUrl&&!address&&docs.length===0)throw new Error("Ajoutez au moins une annonce, une adresse ou un document.");
 
     let prepared=prepareDocs(docs),preparedChars=prepared.reduce((s:number,d:any)=>s+(Number(d.chars_transmitted)||0),0);
@@ -150,7 +151,12 @@ RÈGLES DE FIABILITÉ
 - N'invente jamais un prix, une vente, une surface, un montant de charges, une obligation légale, une décision d'AG ou une quote-part.
 - Chaque fait important issu d'un document doit indiquer le fichier et la page lorsque le marqueur [PAGE N] est disponible.
 - Un document partiellement extrait réduit la confiance mais ne constitue pas un défaut du bien.
-- Les caractéristiques neutres (ex. premier étage sans ascenseur) ne deviennent pas des risques sans impact concret.
+- Une pièce rejetée/illisible doit être signalée comme limite documentaire, jamais transformée en défaut du bien.
+- Les caractéristiques neutres (balcon hors Carrez, étage, absence d'une donnée) ne deviennent pas des risques sans impact concret démontré.
+- Ne qualifie jamais des charges de "élevées", "faibles" ou "excessives" sans comparaison chiffrée explicite.
+- "RAS", "aucune procédure" ou "absence de procédure" ne sont jamais des litiges.
+- Un travail ancien déjà réalisé doit rester dans l'historique ; il ne doit pas être présenté comme dépense future.
+- Un PPPT/PPT voté signifie que l'étude/le plan a été décidé ; cela ne transforme pas automatiquement tous les travaux du plan en travaux votés.
 
 PRIX / MARCHÉ
 - Les lignes DVF+ fournies dans le message utilisateur proviennent du Cerema. Utilise-les comme source prioritaire pour les ventes enregistrées.
@@ -178,13 +184,13 @@ Retourne uniquement un objet JSON valide correspondant aux rubriques demandées.
       copro:{financial_analysis:"",governance_analysis:"",technical_analysis:"",recurring_topics:[],litigation:[],strengths:[],weaknesses:[]},
       works:{voted:[],discussed:[],rejected_or_postponed:[],recommended_pppt:[],recent_completed:[],asl:[],analysis:""},
       buyer_blocks:{diagnostic_works:{summary:"",items:[],total_budget_low:null,total_budget_high:null,budget_note:""},future_copro_costs:{summary:"",items:[],lot_exposure_low:null,lot_exposure_high:null,unknown_exposure:[]},real_acquisition_budget:{purchase_price:null,acquisition_fees_estimate:null,private_works_low:null,private_works_high:null,voted_copro_share:null,known_total_low:null,known_total_high:null,unknown_costs:[],summary:""},before_offer_checks:{summary:"",checks:[],inconsistencies:[],negotiation_impacts:[]}},
-      documents:{received:[],missing_or_to_obtain:[],quality_notes:[],analysis:""},risk_flags:{},
+      documents:{received:[],rejected:[],missing_or_to_obtain:[],quality_notes:[],analysis:""},risk_flags:{},
       executive_summary:{headline:"",overview:"",top_strengths:[],top_risks:[],financial_exposure:"",what_changes_the_decision:[]},
       negotiation:{recommended_strategy:"",arguments:[],conditions_before_offer:[],offer_comment:""},
-      evidence:[],questions_before_offer:[],verdict:{label:"",summary:"",vigilance:"faible|modérée|forte",why:"",go_if:[],stop_if:[]}
+      evidence:[{claim:"",status:"FACT|INFERENCE|UNKNOWN",source:"",page:null}],questions_before_offer:[],verdict:{label:"",summary:"",vigilance:"faible|modérée|forte",why:"",go_if:[],stop_if:[]}
     };
 
-    const buildUser=(preparedDocs:any[],compact=false)=>`ADRESSE DU BIEN:\n${address||"non fournie"}\n\nURL ANNONCE:\n${listingUrl||"non fournie"}\n\nINFORMATIONS COMPLÉMENTAIRES:\n${extra||"aucune"}\n\nVENTES DVF+ OFFICIELLES DU SECTEUR (CANDIDATS BRUTS À FILTRER SELON LE BIEN):\n${officialDvf}\n\nSTRUCTURE JSON ATTENDUE:\n${jsonText(schemaHint)}\n\n${compact?"MODE DE SECOURS COMPACT : sois particulièrement concis et priorise les montants, décisions d’AG, diagnostics, charges, travaux et incohérences.\n\n":""}DOCUMENTS EXTRAITS:\n${preparedDocs.map((d:any,i:number)=>`\n--- DOCUMENT ${i+1}: ${d.name} | pages=${d.pages??"?"} | lecture=${d.quality||"non qualifiée"} | caractères transmis=${d.chars_transmitted}/${d.chars_source}${d.truncated?" | ÉCHANTILLONNÉ":""} ---\n${d.text}`).join("\n")}`;
+    const buildUser=(preparedDocs:any[],compact=false)=>`ADRESSE DU BIEN:\n${address||"non fournie"}\n\nURL ANNONCE:\n${listingUrl||"non fournie"}\n\nINFORMATIONS COMPLÉMENTAIRES:\n${extra||"aucune"}\n\nDOCUMENTS NON EXPLOITABLES / EXCLUS DE L'ANALYSE:\n${documentIssues.length?documentIssues.map((x:any)=>`- ${x.name}: ${x.reason}`).join("\n"):"aucun"}\n\nVENTES DVF+ OFFICIELLES DU SECTEUR (CANDIDATS BRUTS À FILTRER SELON LE BIEN):\n${officialDvf}\n\nSTRUCTURE JSON ATTENDUE:\n${jsonText(schemaHint)}\n\n${compact?"MODE DE SECOURS COMPACT : sois particulièrement concis et priorise les montants, décisions d’AG, diagnostics, charges, travaux et incohérences.\n\n":""}DOCUMENTS EXTRAITS:\n${preparedDocs.map((d:any,i:number)=>`\n--- DOCUMENT ${i+1}: ${d.name} | pages=${d.pages??"?"} | lecture=${d.quality||"non qualifiée"} | caractères transmis=${d.chars_transmitted}/${d.chars_source}${d.truncated?" | ÉCHANTILLONNÉ":""} ---\n${d.text}`).join("\n")}`;
 
     let data:any=null,parsed:any=null,totalUsage:any=null,modelAttempts=0,fallbackCompaction=false,lastError:any=null;
     for(let attempt=1;attempt<=3;attempt++){
@@ -231,6 +237,20 @@ Retourne uniquement un objet JSON valide correspondant aux rubriques demandées.
     let analysis=degradedMode?basicFallbackAnalysis(docs,address):normalizeAnalysis(parsed);
     if(address)analysis.property.address=address;
     analysis=applyOfficialMarketData(analysis,dvf.candidates||[]);
+    analysis.documents=analysis.documents||{};
+    analysis.documents.received=docs.map((d:any)=>String(d?.name||"document"));
+    analysis.documents.rejected=documentIssues;
+    if(documentIssues.length){
+      const notes=Array.isArray(analysis.documents.quality_notes)?analysis.documents.quality_notes:[];
+      analysis.documents.quality_notes=[...notes,...documentIssues.map((x:any)=>`${x.name} — exclu de l'analyse : ${x.reason}`)].slice(0,12);
+    }
+    if(dvf.status!=="ok"){
+      analysis.market=analysis.market||{};
+      analysis.market.estimate_low=null;analysis.market.estimate_high=null;analysis.market.offer_low=null;analysis.market.offer_high=null;
+      analysis.market.comparables=[];analysis.market.confidence="faible";
+      analysis.market.positioning="Source DVF+ officielle momentanément indisponible : aucun positionnement prix n'est affiché.";
+      analysis.market.analysis="ReVisite préfère ne produire aucune estimation plutôt que d'utiliser des comparables non vérifiés.";
+    }
     const p=analysis.property||{};
     if(p.asking_price&&p.surface_m2&&!p.price_per_m2)p.price_per_m2=Math.round(Number(p.asking_price)/Number(p.surface_m2));
     const officialCount=Array.isArray(analysis?.market?.comparables)?analysis.market.comparables.filter((x:any)=>x?.type==="DVF").length:0;
@@ -239,10 +259,12 @@ Retourne uniquement un objet JSON valide correspondant aux rubriques demandées.
       scores.property=null;scores.copro=null;scores.market=null;scores.overall=null;scores.confidence=Math.min(Number(scores.confidence)||0,35);
     }
     const result={analysis,scores,meta:{
-      model,document_count:docs.length,beta:true,generated_at:new Date().toISOString(),
+      model,document_count:docs.length,rejected_document_count:documentIssues.length,beta:true,generated_at:new Date().toISOString(),
       input_chars:preparedChars,dvf_status:dvf.status,dvf_source:dvf.source||null,dvf_candidate_count:Array.isArray(dvf.candidates)?dvf.candidates.length:0,
-      dvf_cache_hit:Boolean(dvf.cache_hit),usage:totalUsage||null,model_attempts:modelAttempts,fallback_compaction:fallbackCompaction,degraded_mode:degradedMode,score_withheld:scores.overall===null,cache_hit:false
+      dvf_cache_hit:Boolean(dvf.cache_hit),usage:totalUsage||null,model_attempts:modelAttempts,fallback_compaction:fallbackCompaction,degraded_mode:degradedMode,score_withheld:scores.overall===null,cache_hit:false,
+      document_quality:docs.map((d:any)=>({name:String(d?.name||"document"),quality:String(d?.quality||"unknown"),pages:Number(d?.pages)||null,weak_pages:Number(d?.weakPages)||0,ocr_pages:Number(d?.ocrPages)||0}))
     }};
+    hardenScores(result);
     await store.setJSON(jobId,{status:"done",result,expires_at:expiresIn(1000*60*60*3)});
     if(!degradedMode&&cacheKey.startsWith("analysis-cache-")){
       try{await store.setJSON(cacheKey,{result,expires_at:expiresIn(1000*60*60*24)})}catch{}
