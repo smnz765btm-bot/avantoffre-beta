@@ -1,0 +1,61 @@
+name: ReVisite full mixed-doc one-shot
+
+on:
+  push:
+    branches: [upload-limit-fix-v1]
+    paths:
+      - '.github/workflows/live-full-mixed-once.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  e2e:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Run one complete production analysis with one readable and one unreadable document
+        shell: bash
+        run: |
+          set -euo pipefail
+          BASE="https://revisite-demo.netlify.app"
+          JOB="full_mixed_${GITHUB_RUN_ID}_${GITHUB_RUN_ATTEMPT}"
+          GOOD=$(printf 'Appartement T4. Surface Carrez 83,44 m2. DPE C. Charges annuelles du lot 1976,66 euros. Aucun travail vote mentionne. %.0s' {1..8})
+          PAYLOAD=$(jq -n --arg job "$JOB" --arg good "$GOOD" '{
+            jobId:$job,
+            batchIndex:0,
+            documents:[
+              {index:0,name:"diagnostics-et-charges.pdf",text:$good,pages:3,quality:"ok",ocrPages:0,weakPages:0},
+              {index:1,name:"plan-scan.pdf",text:"x",pages:1,quality:"failed",ocrPages:1,weakPages:1}
+            ]
+          }')
+          HTTP=$(curl -sS -o /tmp/upload.json -w '%{http_code}' -X POST "$BASE/api/upload-document" -H 'content-type: application/json' -d "$PAYLOAD")
+          cat /tmp/upload.json
+          test "$HTTP" = "200"
+          REF=$(jq -r '.ref' /tmp/upload.json)
+          test -n "$REF" -a "$REF" != "null"
+          jq -e '.count == 1 and .rejected == 1' /tmp/upload.json >/dev/null
+
+          START=$(jq -n --arg job "$JOB" --arg ref "$REF" '{jobId:$job,address:"",listingUrl:"",extra:"Test technique ReVisite. Ne rien inventer.",documentRefs:[$ref]}')
+          HTTP=$(curl -sS -o /tmp/start.json -w '%{http_code}' -X POST "$BASE/api/analyze-background" -H 'content-type: application/json' -d "$START")
+          cat /tmp/start.json
+          test "$HTTP" -ge 200 -a "$HTTP" -lt 300
+
+          if jq -e '.status=="done" and .result' /tmp/start.json >/dev/null 2>&1; then
+            cp /tmp/start.json /tmp/final.json
+          else
+            for i in $(seq 1 12); do
+              sleep 10
+              HTTP=$(curl -sS -o /tmp/status.json -w '%{http_code}' "$BASE/api/analyze-status?jobId=$JOB")
+              cat /tmp/status.json
+              STATUS=$(jq -r '.status // empty' /tmp/status.json)
+              if [ "$STATUS" = "done" ]; then cp /tmp/status.json /tmp/final.json; break; fi
+              if [ "$STATUS" = "error" ] || [ "$HTTP" -ge 500 ]; then exit 1; fi
+            done
+          fi
+
+          test -f /tmp/final.json
+          jq -e '.result.analysis.property.surface_m2 == 83.44' /tmp/final.json >/dev/null
+          jq -e '.result.analysis.property.dpe == "C"' /tmp/final.json >/dev/null
+          jq -e '.result.meta.document_count == 1' /tmp/final.json >/dev/null
+          echo "LIVE_FULL_MIXED_E2E_OK"
