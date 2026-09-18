@@ -1,21 +1,8 @@
 import type { Context, Config } from "@netlify/functions";
 import { jobStore, expiresIn } from "../lib/storage.mjs";
+import { hardenScores } from "../lib/reliability-core.mjs";
 
 const json=(body:any,status=200)=>new Response(JSON.stringify(body),{status,headers:{"Content-Type":"application/json; charset=utf-8","Cache-Control":"no-store"}});
-const clamp=(n:number)=>Math.max(0,Math.min(100,Math.round(n)));
-
-function hardenScores(result:any){
-  const s=result?.scores;if(!s)return;
-  const documentation=Number(s.documentation),confidence=Number(s.confidence);
-  if(Number.isFinite(documentation))s.documentation=clamp(documentation);
-  if(Number.isFinite(confidence))s.confidence=clamp(confidence);
-  if(!Number.isFinite(documentation)||documentation<50)s.overall=null;
-  else if(Number.isFinite(Number(s.overall)))s.overall=clamp(Number(s.overall));
-  else s.overall=null;
-  const c=Number(s.confidence);
-  s.confidence_label=!Number.isFinite(c)?"faible":c>=85?"très bonne":c>=70?"bonne":c>=55?"moyenne":c>=40?"limitée":"faible";
-}
-
 export default async(req:Request,_context:Context)=>{
   if(req.method!=="GET")return json({error:"Méthode non autorisée."},405);
   const url=new URL(req.url),jobId=String(url.searchParams.get("jobId")||"").replace(/[^a-zA-Z0-9_-]/g,"").slice(0,80);
