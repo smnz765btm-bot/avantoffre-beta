@@ -14,32 +14,49 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 3
     steps:
-      - name: Inspect real 299k DVF rows after redirect
+      - name: Summarize nearby official DVF distribution
         shell: bash
         run: |
           set -euo pipefail
           curl -L -sS --max-time 25 'https://files.data.gouv.fr/geo-dvf/latest/csv/2025/communes/31/31555.csv' -o /tmp/dvf.csv
           python3 - <<'PY'
-          import csv, json, math
+          import csv, json, math, statistics
           lat0,lon0=43.642529,1.456254
-          out=[]
+          rows=[]
           with open('/tmp/dvf.csv',encoding='utf-8-sig') as fh:
               for r in csv.DictReader(fh):
+                  if r.get('type_local')!='Appartement':
+                      continue
                   try:
-                      price=float(r['valeur_fonciere']); surf=float(r['surface_reelle_bati']); lat=float(r['latitude']); lon=float(r['longitude'])
+                      price=float(r['valeur_fonciere']); surf=float(r['surface_reelle_bati']); lat=float(r['latitude']); lon=float(r['longitude']); rooms=int(float(r.get('nombre_pieces_principales') or 0))
                   except:
                       continue
-                  if r.get('type_local')!='Appartement' or price!=299000 or not (80<=surf<=90):
+                  if not (58<=surf<=109 and 500<price/surf<15000):
                       continue
                   dlat=math.radians(lat-lat0); dlon=math.radians(lon-lon0)
                   a=math.sin(dlat/2)**2+math.cos(math.radians(lat0))*math.cos(math.radians(lat))*math.sin(dlon/2)**2
                   dist=6371000*2*math.atan2(math.sqrt(a),math.sqrt(max(0,1-a)))
-                  out.append({
-                      'id_mutation':r.get('id_mutation'),'date':r.get('date_mutation'),'surface':surf,'rooms':r.get('nombre_pieces_principales'),
-                      'nombre_lots':r.get('nombre_lots'),'distance_m':round(dist),
-                      'lot1_numero':r.get('lot1_numero'),'lot1_surface_carrez':r.get('lot1_surface_carrez'),
-                      'lot2_numero':r.get('lot2_numero'),'lot2_surface_carrez':r.get('lot2_surface_carrez'),
-                      'lot3_numero':r.get('lot3_numero'),'lot3_surface_carrez':r.get('lot3_surface_carrez')
-                  })
+                  rows.append((dist,price/surf,surf,rooms,price,r.get('date_mutation')))
+          def q(vals,p):
+              vals=sorted(vals); n=len(vals)
+              if not n:return None
+              x=(n-1)*p; lo=int(x); hi=min(lo+1,n-1); t=x-lo
+              return vals[lo]*(1-t)+vals[hi]*t
+          out={}
+          for radius in [300,600,1000,1200]:
+              for only4 in [False,True]:
+                  sel=[x for x in rows if x[0]<=radius and (not only4 or x[3]==4)]
+                  vals=[x[1] for x in sel]
+                  key=f'{radius}m_'+('T4' if only4 else 'all')
+                  out[key]={
+                    'n':len(vals),
+                    'median':round(statistics.median(vals)) if vals else None,
+                    'q1':round(q(vals,.25)) if vals else None,
+                    'q3':round(q(vals,.75)) if vals else None,
+                    'min':round(min(vals)) if vals else None,
+                    'max':round(max(vals)) if vals else None
+                  }
+          near=sorted([x for x in rows if x[0]<=600 and x[3]==4],key=lambda x:(abs(x[2]-83.44),x[0]))[:15]
+          out['sample_T4_600m']=[{'distance_m':round(x[0]),'price_m2':round(x[1]),'surface':x[2],'price':x[4],'date':x[5]} for x in near]
           print(json.dumps(out,ensure_ascii=False,indent=2))
           PY
