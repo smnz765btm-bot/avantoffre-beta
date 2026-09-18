@@ -143,9 +143,18 @@ const candidates=[
 const comps=selectOfficialComparables(candidates,analysis.property);
 assert.equal(comps.length,3,'Les comparables doivent respecter le type et une surface proche');
 assert.ok(comps.every(c=>c.type==='DVF'&&c.source.includes('Cerema')),'Les DVF affichées doivent venir de la source officielle');
-const market=applyOfficialMarketData(analysis,candidates);
+const market=applyOfficialMarketData({
+ property:{surface_m2:83.44,title:'Appartement T4',asking_price:300000},
+ market:{estimate_low:300000,estimate_high:400000,offer_low:280000,offer_high:290000,analysis:'Fourchette IA contradictoire'}
+},candidates);
 assert.equal(market.market.comparables.length,3,'Les comparables IA non vérifiés doivent être remplacés par les DVF officielles');
 assert.ok(market.market.estimate_low&&market.market.estimate_high,'Une fourchette DVF doit pouvoir être calculée');
+assert.equal(market.market.estimate_low,market.market.dvf_reference.low,'La borne basse affichée doit venir du calcul DVF déterministe');
+assert.equal(market.market.estimate_high,market.market.dvf_reference.high,'La borne haute affichée doit venir du calcul DVF déterministe');
+assert.equal(market.market.offer_low,null,'Aucun montant d’offre automatique ne doit survivre au recalage DVF');
+assert.equal(market.market.offer_high,null,'Aucun montant d’offre automatique ne doit survivre au recalage DVF');
+assert.ok(market.market.analysis.includes('ventes DVF officielles'),'Le commentaire marché doit être recalculé à partir des ventes vérifiées');
+assert.ok(!market.market.analysis.includes('contradictoire'),'Le commentaire IA contradictoire doit être écrasé');
 
 const mixedUpload=partitionUploadDocuments([
  {index:0,name:'diagnostics.pdf',text:'Diagnostic exploitable. '.repeat(20),quality:'ok',pages:3},
