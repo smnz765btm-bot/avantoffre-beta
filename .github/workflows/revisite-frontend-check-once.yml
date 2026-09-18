@@ -1,0 +1,33 @@
+name: ReVisite frontend one-shot check
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/revisite-frontend-check-once.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate frontend JavaScript
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+          s=Path('index.html').read_text()
+          m=re.search(r'<script type="module">(.*?)</script>',s,re.S)
+          if not m:
+              raise SystemExit('inline module not found')
+          Path('/tmp/revisite-inline.mjs').write_text(m.group(1))
+          PY
+          node --check /tmp/revisite-inline.mjs
+          node --check ui-enhancements.js
+          grep -q "ocrBudget" index.html
+          grep -q "Lecture partielle" ui-enhancements.js
+          echo "ReVisite frontend check OK"
