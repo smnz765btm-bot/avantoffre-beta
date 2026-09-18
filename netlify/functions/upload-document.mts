@@ -1,5 +1,6 @@
 import type { Context, Config } from "@netlify/functions";
 import { jobStore, expiresIn } from "../lib/storage.mjs";
+import { partitionUploadDocuments } from "../lib/upload-core.mjs";
 
 const json=(body:any,status=200)=>new Response(JSON.stringify(body),{status,headers:{"Content-Type":"application/json; charset=utf-8","Cache-Control":"no-store"}});
 const hash=async(value:string)=>Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256",new TextEncoder().encode(value)))).map(b=>b.toString(16).padStart(2,"0")).join("").slice(0,24);
@@ -9,18 +10,6 @@ function hasUsableOpenAIKey(){
   if(direct.startsWith("sk-"))return true;
   const split=["REVISITE_OPENAI_A","REVISITE_OPENAI_B","REVISITE_OPENAI_C1","REVISITE_OPENAI_C2"].map(k=>String(Netlify.env.get(k)||"")).join("").trim();
   return split.startsWith("sk-");
-}
-
-function normalizeDocument(raw:any){
-  const index=Number(raw?.index),name=String(raw?.name||"document").slice(0,240),text=String(raw?.text||"");
-  const pages=Number.isFinite(Number(raw?.pages))?Number(raw.pages):null;
-  const requestedQuality=String(raw?.quality||"");
-  const quality=["ok","partial","failed"].includes(requestedQuality)?requestedQuality:(text.trim().length>=80?"ok":"failed");
-  const ocrPages=Math.max(0,Number(raw?.ocrPages)||0),weakPages=Math.max(0,Number(raw?.weakPages)||0);
-  if(!Number.isInteger(index)||index<0||index>29)return{index,name,text:"",pages,quality:"failed",ocrPages,weakPages,accepted:false,error:"Référence de document invalide."};
-  if(text.length>500000)return{index,name,text:"",pages,quality:"failed",ocrPages,weakPages,accepted:false,error:`${name} est trop volumineux après extraction.`};
-  if(quality==="failed"||text.trim().length<80)return{index,name,text:"",pages,quality:"failed",ocrPages,weakPages,accepted:false,error:`${name} n'est pas assez exploitable après OCR.`};
-  return{index,name,text,pages,quality,ocrPages,weakPages,accepted:true,error:null};
 }
 
 export default async(req:Request,_context:Context)=>{
@@ -34,8 +23,7 @@ export default async(req:Request,_context:Context)=>{
 
     const incoming=Array.isArray(body?.documents)?body.documents:[body];
     if(!incoming.length||incoming.length>12)return json({error:"Lot de documents invalide."},400);
-    const normalized=incoming.map(normalizeDocument);
-    const docs=normalized.filter((d:any)=>d.accepted);
+    const {normalized,accepted:docs}=partitionUploadDocuments(incoming);
     const totalChars=docs.reduce((s:number,d:any)=>s+d.text.length,0);
     if(totalChars>900000)return json({error:"Lot de documents trop volumineux. ReVisite le renverra en plusieurs lots."},413);
 
