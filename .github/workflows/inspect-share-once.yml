@@ -19,4 +19,35 @@ jobs:
         run: |
           set -euo pipefail
           curl -sS --max-time 25 'https://files.data.gouv.fr/geo-dvf/latest/csv/2025/communes/31/31555.csv' -o /tmp/dvf.csv
-          python3 -c "import csv,json,math; lat0,lon0=43.642529,1.456254; out=[]; f=open('/tmp/dvf.csv',encoding='utf-8'); rows=csv.DictReader(f); for r in rows:     price=float(r['valeur_fonciere'] or 0) if (r.get('valeur_fonciere') or '').replace('.','',1).isdigit() else 0;     surf=float(r['surface_reelle_bati'] or 0) if (r.get('surface_reelle_bati') or '').replace('.','',1).isdigit() else 0;     lat=float(r['latitude'] or 0) if (r.get('latitude') or '').replace('.','',1).isdigit() else 0;     lon=float(r['longitude'] or 0) if (r.get('longitude') or '').replace('.','',1).isdigit() else 0;     dlat=math.radians(lat-lat0); dlon=math.radians(lon-lon0); a=math.sin(dlat/2)**2+math.cos(math.radians(lat0))*math.cos(math.radians(lat))*math.sin(dlon/2)**2; dist=6371000*2*math.atan2(math.sqrt(a),math.sqrt(max(0,1-a)));     out.append({'id_mutation':r.get('id_mutation'),'date':r.get('date_mutation'),'price':price,'surface':surf,'rooms':r.get('nombre_pieces_principales'),'nombre_lots':r.get('nombre_lots'),'lot1_numero':r.get('lot1_numero'),'lot1_surface_carrez':r.get('lot1_surface_carrez'),'lot2_numero':r.get('lot2_numero'),'lot2_surface_carrez':r.get('lot2_surface_carrez'),'surface_terrain':r.get('surface_terrain'),'distance_m':round(dist)}) if r.get('type_local')=='Appartement' and dist<=150 and price>=280000 and 70<=surf<=100 else None; print(json.dumps(out,ensure_ascii=False,indent=2))"
+          python3 - <<'PY'
+          import csv, json, math
+          lat0,lon0=43.642529,1.456254
+          out=[]
+          with open('/tmp/dvf.csv',encoding='utf-8') as fh:
+              for r in csv.DictReader(fh):
+                  if r.get('type_local')!='Appartement':
+                      continue
+                  try:
+                      price=float(r['valeur_fonciere']); surf=float(r['surface_reelle_bati']); lat=float(r['latitude']); lon=float(r['longitude'])
+                  except:
+                      continue
+                  dlat=math.radians(lat-lat0); dlon=math.radians(lon-lon0)
+                  a=math.sin(dlat/2)**2+math.cos(math.radians(lat0))*math.cos(math.radians(lat))*math.sin(dlon/2)**2
+                  dist=6371000*2*math.atan2(math.sqrt(a),math.sqrt(max(0,1-a)))
+                  if dist<=150 and price>=280000 and 70<=surf<=100:
+                      out.append({
+                          'id_mutation':r.get('id_mutation'),
+                          'date':r.get('date_mutation'),
+                          'price':price,
+                          'surface':surf,
+                          'rooms':r.get('nombre_pieces_principales'),
+                          'nombre_lots':r.get('nombre_lots'),
+                          'lot1_numero':r.get('lot1_numero'),
+                          'lot1_surface_carrez':r.get('lot1_surface_carrez'),
+                          'lot2_numero':r.get('lot2_numero'),
+                          'lot2_surface_carrez':r.get('lot2_surface_carrez'),
+                          'surface_terrain':r.get('surface_terrain'),
+                          'distance_m':round(dist)
+                      })
+          print(json.dumps(out,ensure_ascii=False,indent=2))
+          PY
