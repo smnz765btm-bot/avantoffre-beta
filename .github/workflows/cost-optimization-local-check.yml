@@ -2,7 +2,7 @@ name: ReVisite cost optimization local check
 
 on:
   push:
-    branches: [cost-optimization-v1, upload-limit-fix-v1, reliability-dpe-market-v3]
+    branches: [cost-optimization-v1, upload-limit-fix-v1]
     paths:
       - 'index.html'
       - 'ui-enhancements.js'
