@@ -156,10 +156,13 @@ Retourne uniquement un objet JSON valide correspondant aux rubriques demandées.
 
     const user=`ADRESSE DU BIEN:\n${address||"non fournie"}\n\nURL ANNONCE:\n${listingUrl||"non fournie"}\n\nINFORMATIONS COMPLÉMENTAIRES:\n${extra||"aucune"}\n\nVENTES DVF+ OFFICIELLES DU SECTEUR (CANDIDATS BRUTS À FILTRER SELON LE BIEN):\n${officialDvf}\n\nSTRUCTURE JSON ATTENDUE:\n${jsonText(schemaHint)}\n\nDOCUMENTS EXTRAITS:\n${prepared.map((d:any,i:number)=>`\n--- DOCUMENT ${i+1}: ${d.name} | pages=${d.pages??"?"} | lecture=${d.quality||"non qualifiée"} | caractères transmis=${d.chars_transmitted}/${d.chars_source}${d.truncated?" | ÉCHANTILLONNÉ":""} ---\n${d.text}`).join("\n")}`;
 
-    const reasoningEffort=preparedChars>180000?"medium":"low";
+    // L'analyse documentaire privilégie une restitution structurée et factuelle.
+    // Un raisonnement "medium" sur les gros dossiers peut consommer le budget de sortie
+    // avant que le JSON soit terminé. "low" est plus fiable et moins coûteux ici.
+    const reasoningEffort="low";
     const payload:any={
       model,input:[{role:"system",content:[{type:"input_text",text:system}]},{role:"user",content:[{type:"input_text",text:user}]}],
-      tools:listingUrl?[{type:"web_search"}]:[],reasoning:{effort:reasoningEffort},max_output_tokens:7000,
+      tools:listingUrl?[{type:"web_search"}]:[],reasoning:{effort:reasoningEffort},max_output_tokens:12000,
       text:{format:{type:"json_object"},verbosity:"low"},store:false,prompt_cache_key:"revisite-analysis-v3"
     };
     const rsp=await fetch("https://api.openai.com/v1/responses",{method:"POST",headers:{Authorization:`Bearer ${apiKey}`,"Content-Type":"application/json"},body:JSON.stringify(payload)});
@@ -168,6 +171,9 @@ Retourne uniquement un objet JSON valide correspondant aux rubriques demandées.
     let outText=data?.output_text;
     if(!outText&&Array.isArray(data?.output))outText=data.output.flatMap((o:any)=>o.content||[]).filter((c:any)=>c.type==="output_text").map((c:any)=>c.text).join("\n");
     if(!outText)throw new Error("Aucun rapport exploitable.");
+    if(data?.status==="incomplete"&&data?.incomplete_details?.reason==="max_output_tokens"){
+      throw new Error("REPORT_OUTPUT_LIMIT");
+    }
 
     let analysis=normalizeAnalysis(safeJsonFromText(outText));
     if(address)analysis.property.address=address;
@@ -189,7 +195,13 @@ Retourne uniquement un objet JSON valide correspondant aux rubriques demandées.
     }
   }catch(err:any){
     console.error("ReVisite background error",err);
-    if(jobId)await store.setJSON(jobId,{status:"error",error:err?.message||"Erreur interne.",expires_at:expiresIn(1000*60*60)});
+    const message=String(err?.message||"");
+    const error_code=
+      /REPORT_OUTPUT_LIMIT|Réponse IA non structurée/i.test(message)?"MODEL_OUTPUT":
+      /429|rate limit|quota/i.test(message)?"PROVIDER_RATE":
+      /context|too large|request too large|413/i.test(message)?"INPUT_TOO_LARGE":
+      "ENGINE";
+    if(jobId)await store.setJSON(jobId,{status:"error",error_code,expires_at:expiresIn(1000*60*60)});
   }
 };
 
