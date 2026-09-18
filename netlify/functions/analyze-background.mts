@@ -14,6 +14,24 @@ const safeJsonFromText=(value:string)=>{
   throw new Error("Réponse IA non structurée");
 };
 
+const mergeUsage=(a:any,b:any)=>{
+  if(!b)return a||null;
+  const x=a||{};
+  return{
+    input_tokens:(Number(x.input_tokens)||0)+(Number(b.input_tokens)||0),
+    output_tokens:(Number(x.output_tokens)||0)+(Number(b.output_tokens)||0),
+    total_tokens:(Number(x.total_tokens)||0)+(Number(b.total_tokens)||0)
+  };
+};
+const retryableModelFailure=(message:string)=>/REPORT_OUTPUT_LIMIT|Réponse IA non structurée|Aucun rapport exploitable|context|too long|too large|request too large|timeout|aborted|ECONN|HTTP 5\d\d|server_error|temporarily unavailable/i.test(message);
+async function fetchWithTimeout(url:string,init:any,timeoutMs=180000){
+  const controller=new AbortController();
+  const timer=setTimeout(()=>controller.abort(),timeoutMs);
+  try{return await fetch(url,{...init,signal:controller.signal})}
+  catch(err:any){if(err?.name==="AbortError")throw new Error("MODEL_TIMEOUT");throw err}
+  finally{clearTimeout(timer)}
+}
+
 async function fetchJson(url:string,timeoutMs=9000){
   const controller=new AbortController();
   const timer=setTimeout(()=>controller.abort(),timeoutMs);
