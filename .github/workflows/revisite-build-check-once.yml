@@ -1,0 +1,29 @@
+name: ReVisite build check one-shot
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/revisite-build-check-once.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npm test
+      - run: npm run build
+      - name: Validate generated frontend
+        run: |
+          test -f dist/index.html
+          node --check ui-enhancements.js
+          echo "BUILD_OK"
