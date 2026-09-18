@@ -1,4 +1,5 @@
 name: ReVisite build check one-shot
+# validates latest production source
 
 on:
   push:
