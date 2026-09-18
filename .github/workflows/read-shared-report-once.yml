@@ -1,0 +1,22 @@
+name: ReVisite read shared report one-shot
+
+on:
+  push:
+    branches: [upload-limit-fix-v1]
+    paths:
+      - '.github/workflows/read-shared-report-once.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  fetch-report:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - name: Fetch shared report JSON once
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl -sS 'https://revisite-demo.netlify.app/api/shared-analysis?id=1b95c01b349349049ba3c388' -o /tmp/report.json
+          jq . /tmp/report.json
