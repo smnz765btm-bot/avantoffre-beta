@@ -224,6 +224,55 @@ export function applyDeterministicFacts(analysis,docs=[]){
   return a;
 }
 
+function parseCsvLine(line){
+  const out=[];let cur='',quoted=false;
+  for(let i=0;i<line.length;i++){
+    const ch=line[i];
+    if(ch==='"'){
+      if(quoted&&line[i+1]==='"'){cur+='"';i++}
+      else quoted=!quoted;
+    }else if(ch===','&&!quoted){out.push(cur);cur=''}
+    else cur+=ch;
+  }
+  out.push(cur);return out;
+}
+function haversineMeters(lat1,lon1,lat2,lon2){
+  const r=6371000,toRad=x=>x*Math.PI/180,dLat=toRad(lat2-lat1),dLon=toRad(lon2-lon1);
+  const a=Math.sin(dLat/2)**2+Math.cos(toRad(lat1))*Math.cos(toRad(lat2))*Math.sin(dLon/2)**2;
+  return 2*r*Math.atan2(Math.sqrt(a),Math.sqrt(Math.max(0,1-a)));
+}
+export function parseStaticDvfCsv(csv,{lat,lon,maxDistanceM=1200,source='data.gouv.fr — DVF Etalab'}={}){
+  const raw=String(csv||'').replace(/^\uFEFF/,'');if(!raw.trim())return[];
+  const lines=raw.split(/\r?\n/).filter(Boolean);if(lines.length<2)return[];
+  const headers=parseCsvLine(lines[0]).map(x=>x.trim());
+  const ix=Object.fromEntries(headers.map((h,i)=>[h,i]));
+  const required=['id_mutation','date_mutation','valeur_fonciere','type_local','surface_reelle_bati','longitude','latitude'];
+  if(required.some(k=>ix[k]===undefined))return[];
+  const seen=new Set(),out=[];
+  for(let i=1;i<lines.length;i++){
+    const row=parseCsvLine(lines[i]);
+    const type=String(row[ix.type_local]||'').trim();
+    if(type!=='Appartement'&&type!=='Maison')continue;
+    const price=frNumber(row[ix.valeur_fonciere]),surface=frNumber(row[ix.surface_reelle_bati]);
+    const rlat=frNumber(row[ix.latitude]),rlon=frNumber(row[ix.longitude]);
+    if(!(price>0)||!(surface>10)||rlat===null||rlon===null)continue;
+    const pm=price/surface;if(!(pm>500&&pm<15000&&price<5000000))continue;
+    const distance_m=Number.isFinite(Number(lat))&&Number.isFinite(Number(lon))?Math.round(haversineMeters(Number(lat),Number(lon),rlat,rlon)):null;
+    if(distance_m!==null&&distance_m>maxDistanceM)continue;
+    const id=String(row[ix.id_mutation]||'')+'|'+type+'|'+surface+'|'+price;
+    if(seen.has(id))continue;seen.add(id);
+    const num=ix.adresse_numero===undefined?'':String(row[ix.adresse_numero]||'').trim();
+    const voie=ix.adresse_nom_voie===undefined?'':String(row[ix.adresse_nom_voie]||'').trim();
+    out.push({
+      valeurfonc:price,sbati:surface,libtypbien:type.toUpperCase(),codtypbien:type==='Appartement'?'121':'111',
+      datemut:String(row[ix.date_mutation]||''),distance_m,source,
+      address:[num,voie].filter(Boolean).join(' '),id_mutation:String(row[ix.id_mutation]||'')
+    });
+  }
+  out.sort((a,b)=>(a.distance_m??999999)-(b.distance_m??999999)||String(b.datemut).localeCompare(String(a.datemut)));
+  return out;
+}
+
 function median(xs){const a=xs.filter(Number.isFinite).sort((x,y)=>x-y);if(!a.length)return null;const m=Math.floor(a.length/2);return a.length%2?a[m]:(a[m-1]+a[m])/2;}
 function percentile(xs,p){const a=xs.filter(Number.isFinite).sort((x,y)=>x-y);if(!a.length)return null;const i=(a.length-1)*p,lo=Math.floor(i),hi=Math.ceil(i);return a[lo]+(a[hi]-a[lo])*(i-lo);}
 
@@ -245,10 +294,13 @@ export function selectOfficialComparables(candidates=[],property={}){
     if(sd!==0)return sd;
     return String(b.date).localeCompare(String(a.date));
   });
-  return list.slice(0,5).map(x=>({
-    label:`${x.type||'Vente'} · ${Math.round(x.surface)} m²`,date:x.date,price:Math.round(x.price),surface:Math.round(x.surface*10)/10,
-    price_m2:Math.round(x.price_m2),type:'DVF',distance_note:'secteur proche (emprise env. 500 m)',source:'Cerema — DVF+ open-data'
-  }));
+  return list.slice(0,5).map(x=>{
+    const distance=num(x.raw?.distance_m),address=text(x.raw?.address),source=text(x.raw?.source)||'Cerema — DVF+ open-data';
+    return{
+      label:[address||x.type||'Vente',Math.round(x.surface)+' m²'].filter(Boolean).join(' · '),date:x.date,price:Math.round(x.price),surface:Math.round(x.surface*10)/10,
+      price_m2:Math.round(x.price_m2),type:'DVF',distance_m:distance,distance_note:distance!==null?`${Math.round(distance)} m env.`:'secteur proche',source
+    };
+  });
 }
 
 export function applyOfficialMarketData(analysis,candidates=[]){
@@ -260,7 +312,7 @@ export function applyOfficialMarketData(analysis,candidates=[]){
     if(surface&&pms.length>=2){
       const q25=percentile(pms,.25),q75=percentile(pms,.75),med=median(pms);
       const low=Math.round(surface*(q25??med)*.95/1000)*1000,high=Math.round(surface*(q75??med)*1.05/1000)*1000;
-      a.market.dvf_reference={low,high,median_price_m2:Math.round(med),count:comps.length,source:'Cerema — DVF+ open-data'};
+      a.market.dvf_reference={low,high,median_price_m2:Math.round(med),count:comps.length,source:comps[0]?.source||'DVF open-data'};
       const aiLow=num(a.market.estimate_low),aiHigh=num(a.market.estimate_high);
       const grosslyOutside=aiLow&&aiHigh&&(aiHigh<low*.72||aiLow>high*1.28||aiLow>aiHigh);
       if(!aiLow||!aiHigh||grosslyOutside){a.market.estimate_low=low;a.market.estimate_high=high;a.market.positioning=[text(a.market.positioning),'Fourchette recalée sur les ventes DVF+ disponibles dans le secteur.'].filter(Boolean).join(' ');}
