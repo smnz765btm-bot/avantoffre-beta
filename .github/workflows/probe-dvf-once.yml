@@ -1,0 +1,27 @@
+name: Probe official DVF once
+
+on:
+  push:
+    branches: [reliability-report-v1]
+    paths:
+      - '.github/workflows/probe-dvf-once.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - name: Probe Geoplateforme + Cerema endpoints
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "GEOCODER"
+          curl -sS --max-time 15 'https://data.geopf.fr/geocodage/completion/?text=26%20chemin%20de%20Borderouge%2031200%20Toulouse&type=StreetAddress&maximumResponses=1' | jq '.results[0] | {fulltext,city,zipcode,citycode,x,y}'
+          echo "CEREMA CODE_INSEE"
+          curl -sS -w '\nHTTP:%{http_code}\n' --max-time 20 'https://apidf-preprod.cerema.fr/dvf_opendata/mutations/?code_insee=31555&anneemut_min=2024&codtypbien=121&page_size=3' | head -c 12000
+          echo
+          echo "CEREMA BBOX"
+          curl -sS -w '\nHTTP:%{http_code}\n' --max-time 20 'https://apidf-preprod.cerema.fr/dvf_opendata/mutations/?in_bbox=1.45,43.61,1.47,43.63&anneemut_min=2024&codtypbien=121&page_size=3' | head -c 12000
