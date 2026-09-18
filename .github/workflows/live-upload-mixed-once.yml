@@ -20,10 +20,7 @@ jobs:
           set -euo pipefail
           BASE="https://revisite-demo.netlify.app"
           JOB="mixed_upload_${GITHUB_RUN_ID}_${GITHUB_RUN_ATTEMPT}"
-          GOOD=$(python3 - <<'PY'
-print("Diagnostic exploitable, surface Carrez 83,44 m2, DPE C. "*12)
-PY
-)
+          GOOD=$(printf 'Diagnostic exploitable, surface Carrez 83,44 m2, DPE C. %.0s' {1..12})
           PAYLOAD=$(jq -n --arg job "$JOB" --arg good "$GOOD" '{
             jobId:$job,
             batchIndex:0,
