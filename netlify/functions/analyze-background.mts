@@ -261,7 +261,7 @@ Retourne uniquement un objet JSON valide correspondant aux rubriques demandées.
       dvf_cache_hit:Boolean(dvf.cache_hit),usage:totalUsage||null,model_attempts:modelAttempts,fallback_compaction:fallbackCompaction,degraded_mode:degradedMode,score_withheld:scores.overall===null,cache_hit:false
     }};
     await store.setJSON(jobId,{status:"done",result,expires_at:expiresIn(1000*60*60*3)});
-    if(cacheKey.startsWith("analysis-cache-")){
+    if(!degradedMode&&cacheKey.startsWith("analysis-cache-")){
       try{await store.setJSON(cacheKey,{result,expires_at:expiresIn(1000*60*60*24)})}catch{}
     }
   }catch(err:any){
