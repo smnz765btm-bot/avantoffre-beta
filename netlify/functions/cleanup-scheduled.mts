@@ -17,4 +17,4 @@ export default async()=>{
   }catch(err){console.error("ReVisite cleanup error",err)}
 };
 
-export const config:Config={schedule:"17 3 * * *"};
+export const config:Config={schedule:"17 3 * * 0"};
