@@ -75,14 +75,12 @@ export default async(req:Request,_context:Context)=>{
     if(cached?.result&&!isExpired(cached)){
       const result=structuredClone(cached.result);
       result.meta={...(result.meta||{}),cache_hit:true,cache_reused_at:new Date().toISOString()};
-      await store.setJSON(jobId,{status:"done",result,expires_at:expiresIn(1000*60*60)});
       await Promise.allSettled(documentRefs.map(ref=>store.delete(ref)));
-      return json({jobId,status:"done",cache_hit:true},202);
+      return json({jobId,status:"done",cache_hit:true,result},200);
     }
 
     const rate=await checkRateLimit(store,req,cacheKey);if(!rate.ok){await Promise.allSettled(documentRefs.map(ref=>store.delete(ref)));return json({error:rate.message},429)}
     const expiry=expiresIn(1000*60*60*3),input={listingUrl,address,documents,extra,cacheKey,expires_at:expiry};
-    await store.setJSON(jobId,{status:"queued",started_at:new Date().toISOString(),progress:"Analyse en attente",expires_at:expiry});
     await store.setJSON(`input-${jobId}`,input);
     await Promise.allSettled(documentRefs.map(ref=>store.delete(ref)));
 
@@ -96,7 +94,6 @@ export default async(req:Request,_context:Context)=>{
   }catch(err:any){
     console.error("ReVisite start error",err);
     if(documentRefs.length)await Promise.allSettled(documentRefs.map(ref=>store.delete(ref)));
-    if(jobId)await store.setJSON(jobId,{status:"error",error:err?.message||"Impossible de lancer l'analyse.",expires_at:expiresIn(1000*60*60)});
     return json({error:err?.message||"Impossible de lancer l'analyse."},500);
   }
 };
