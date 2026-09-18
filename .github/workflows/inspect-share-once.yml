@@ -1,0 +1,81 @@
+name: Inspect ReVisite share once
+
+on:
+  push:
+    branches: [inspect-share-1f2e9fde]
+    paths:
+      - '.github/workflows/inspect-share-once.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - name: Inspect sanitized report fields
+        shell: bash
+        run: |
+          set -euo pipefail
+          URL='https://revisite-demo.netlify.app/api/shared-analysis?id=1f2e9fde1702454ca16779a7'
+          curl -sS --max-time 20 "$URL" -o /tmp/report.json
+          jq -e '.result.analysis' /tmp/report.json >/dev/null
+          jq '{
+            status:(.status // "ok"),
+            property:{
+              surface_m2:.result.analysis.property.surface_m2,
+              rooms:.result.analysis.property.rooms,
+              floor:.result.analysis.property.floor,
+              dpe:.result.analysis.property.dpe,
+              energy_consumption_kwh_m2:.result.analysis.property.energy_consumption_kwh_m2,
+              ghg_kgco2_m2:.result.analysis.property.ghg_kgco2_m2,
+              energy_cost_low:.result.analysis.property.energy_cost_low,
+              energy_cost_high:.result.analysis.property.energy_cost_high,
+              asking_price:.result.analysis.property.asking_price
+            },
+            copro_metrics:.result.analysis.copro_metrics,
+            market:{
+              estimate_low:.result.analysis.market.estimate_low,
+              estimate_high:.result.analysis.market.estimate_high,
+              confidence:.result.analysis.market.confidence,
+              positioning:.result.analysis.market.positioning,
+              analysis:.result.analysis.market.analysis,
+              comparables:(.result.analysis.market.comparables|map({date,price,surface,price_m2,distance_m,source})|.[0:5])
+            },
+            works_counts:{
+              voted:(.result.analysis.works.voted|length),
+              discussed:(.result.analysis.works.discussed|length),
+              recommended_pppt:(.result.analysis.works.recommended_pppt|length),
+              recent_completed:(.result.analysis.works.recent_completed|length)
+            },
+            copro_text:{
+              financial_analysis:.result.analysis.copro.financial_analysis,
+              governance_analysis:.result.analysis.copro.governance_analysis,
+              technical_analysis:.result.analysis.copro.technical_analysis,
+              litigation_count:(.result.analysis.copro.litigation|length)
+            },
+            documents:{
+              received_count:(.result.analysis.documents.received|length),
+              rejected_count:(.result.analysis.documents.rejected|length),
+              missing_count:(.result.analysis.documents.missing_or_to_obtain|length)
+            },
+            scores:.result.scores,
+            meta:{
+              document_count:.result.meta.document_count,
+              rejected_document_count:.result.meta.rejected_document_count,
+              dvf_status:.result.meta.dvf_status,
+              dvf_source:.result.meta.dvf_source,
+              dvf_candidate_count:.result.meta.dvf_candidate_count,
+              score_withheld:.result.meta.score_withheld,
+              degraded_mode:.result.meta.degraded_mode,
+              model_attempts:.result.meta.model_attempts,
+              fallback_compaction:.result.meta.fallback_compaction
+            },
+            guardrails:{
+              contains_auto_offer:((.result.analysis.negotiation.offer_comment//"")|test("[0-9]{3}[ .]?[0-9]{3}")),
+              contains_high_charges_claim:([.result.analysis.copro.financial_analysis,.result.analysis.executive_summary.overview,.result.analysis.executive_summary.top_risks[]?]|map(tostring)|join(" ")|test("charges (très )?(élevées|hautes)";"i")),
+              contains_collective_arrears_claim:([.result.analysis.copro.financial_analysis,.result.analysis.executive_summary.overview,.result.analysis.executive_summary.top_risks[]?]|map(tostring)|join(" ")|test("impayés collectifs";"i")),
+              evidence_unknown_count:(.result.analysis.evidence|map(select(.status=="UNKNOWN"))|length)
+            }
+          }' /tmp/report.json
