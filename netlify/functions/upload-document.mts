@@ -11,15 +11,6 @@ function hasUsableOpenAIKey(){
   return split.startsWith("sk-");
 }
 
-async function allowUpload(store:any,req:Request){
-  const ip=(req.headers.get("x-nf-client-connection-ip")||req.headers.get("x-forwarded-for")?.split(",")[0]||"unknown").trim();
-  const day=new Date().toISOString().slice(0,10),key=`upload-ip-${day}-${await hash(ip)}`,prev:any=await store.get(key,{type:"json"});
-  const limit=Math.max(10,Number(Netlify.env.get("REVISITE_UPLOAD_DAILY_LIMIT"))||40),count=Number(prev?.count)||0;
-  if(count>=limit)return false;
-  await store.setJSON(key,{count:count+1,expires_at:expiresIn(1000*60*60*48)});
-  return true;
-}
-
 function normalizeDocument(raw:any){
   const index=Number(raw?.index),name=String(raw?.name||"document").slice(0,240),text=String(raw?.text||"");
   const pages=Number.isFinite(Number(raw?.pages))?Number(raw.pages):null;
@@ -36,7 +27,6 @@ export default async(req:Request,_context:Context)=>{
   if(!hasUsableOpenAIKey())return json({error:"Le moteur ReVisite n'est pas correctement configuré."},503);
   const store=jobStore();
   try{
-    if(!await allowUpload(store,req))return json({error:"Limite d'envoi atteinte pour aujourd'hui sur cette bêta."},429);
     const body:any=await req.json();
     const jobId=String(body?.jobId||"").replace(/[^a-zA-Z0-9_-]/g,"").slice(0,80);
     if(!jobId)return json({error:"Référence d'analyse invalide."},400);
