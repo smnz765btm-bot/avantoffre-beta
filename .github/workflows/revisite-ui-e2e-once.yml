@@ -1,0 +1,70 @@
+name: ReVisite browser one-shot E2E
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/revisite-ui-e2e-once.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  ui:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install browser test dependencies
+        run: |
+          npm install --no-save playwright@1.55.0
+          npx playwright install --with-deps chromium
+          python3 -m pip install reportlab
+      - name: Create synthetic dossier
+        run: |
+          python3 - <<'PY'
+          from reportlab.pdfgen import canvas
+          from reportlab.lib.pagesizes import A4
+          docs=[
+            ("diagnostics.pdf",[
+              "Diagnostic de performance energetique DPE C.",
+              "Surface Carrez : 83,44 m2.",
+              "Appartement T4.",
+              "Installation electrique : aucune anomalie majeure relevee."
+            ]),
+            ("charges.pdf",[
+              "Decompte de charges du lot.",
+              "Total annuel : 1976,66 euros.",
+              "Charges courantes de copropriete."
+            ])
+          ]
+          for name,lines in docs:
+              c=canvas.Canvas("/tmp/"+name,pagesize=A4)
+              y=800
+              for line in lines:
+                  c.drawString(60,y,line); y-=24
+              c.save()
+          PY
+      - name: Run production browser flow
+        run: |
+          cat > /tmp/e2e.mjs <<'JS'
+          import { chromium } from 'playwright';
+          const browser=await chromium.launch({headless:true});
+          const page=await browser.newPage();
+          page.setDefaultTimeout(180000);
+          await page.goto('https://revisite-demo.netlify.app/?e2e=1',{waitUntil:'networkidle'});
+          await page.locator('#address').fill('26 chemin de Borderouge 31200 Toulouse');
+          await page.locator('#files').setInputFiles(['/tmp/diagnostics.pdf','/tmp/charges.pdf']);
+          await page.waitForFunction(() => document.querySelectorAll('#filesList .file').length >= 2);
+          await page.locator('#analyze').click();
+          const report=page.locator('#report');
+          await report.waitFor({state:'visible',timeout:240000});
+          const text=(await report.innerText()).toLowerCase();
+          if(!text.includes('83') || !text.includes('1976')) throw new Error('Rapport affiché mais données de contrôle absentes');
+          console.log('FIRST ANALYSIS OK');
+          await page.locator('#analyze').click();
+          await report.waitFor({state:'visible',timeout:120000});
+          console.log('CACHE/RETRY FLOW OK');
+          await browser.close();
+          JS
+          node /tmp/e2e.mjs
