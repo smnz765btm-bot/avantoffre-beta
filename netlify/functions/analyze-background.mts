@@ -85,17 +85,20 @@ const slimDvfRow=(x:any,source="Cerema — DVF+ open-data")=>({
 async function fetchDvfCandidates(address:string,store:any){
   if(!address)return{status:"not_requested",candidates:[],source:"",cache_hit:false};
   const normalized=address.toLowerCase().replace(/\s+/g," ").trim();
-  const cacheKey=`dvf-cache-${await digest(normalized)}`;
+  const cacheKey=`dvf-cache-v2-${await digest(normalized)}`;
   try{
     const cached:any=await store.get(cacheKey,{type:"json"});
     if(cached&&!isExpired(cached)&&Array.isArray(cached.candidates))return{...cached,cache_hit:true};
   }catch{}
   try{
-    const geo=new URL("https://data.geopf.fr/geocodage/completion/");
-    geo.searchParams.set("text",address);geo.searchParams.set("type","StreetAddress");geo.searchParams.set("maximumResponses","1");
+    const geo=new URL("https://data.geopf.fr/geocodage/search/");
+    geo.searchParams.set("q",address);geo.searchParams.set("limit","1");
     const g:any=await fetchJson(geo.toString(),7000);
-    const first=Array.isArray(g?.results)?g.results[0]:null;
-    const lon=num(first?.x),lat=num(first?.y);
+    const first=Array.isArray(g?.features)?g.features[0]:null;
+    const coords=Array.isArray(first?.geometry?.coordinates)?first.geometry.coordinates:[];
+    const lon=num(coords[0]),lat=num(coords[1]);
+    const citycode=String(first?.properties?.citycode||"").replace(/[^0-9A-Z]/gi,"").slice(0,8);
+    const depcode=String(first?.properties?.depcode||citycode.slice(0,2)||"").replace(/[^0-9A-Z]/gi,"").slice(0,3);
     if(lon===null||lat===null)return{status:"geocode_unavailable",candidates:[],source:"",cache_hit:false};
     const latDelta=.0052,lonDelta=.0052/Math.max(.45,Math.cos(lat*Math.PI/180));
     const bbox=[lon-lonDelta,lat-latDelta,lon+lonDelta,lat+latDelta].map(v=>v.toFixed(6)).join(",");
