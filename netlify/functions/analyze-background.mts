@@ -77,8 +77,9 @@ async function fetchText(url:string,timeoutMs=15000){
   }finally{clearTimeout(timer)}
 }
 
-const slimDvfRow=(x:any)=>({
-  valeurfonc:x?.valeurfonc??null,sbati:x?.sbati??null,libtypbien:x?.libtypbien??null,codtypbien:x?.codtypbien??null,datemut:x?.datemut??null
+const slimDvfRow=(x:any,source="Cerema — DVF+ open-data")=>({
+  valeurfonc:x?.valeurfonc??null,sbati:x?.sbati??null,libtypbien:x?.libtypbien??null,codtypbien:x?.codtypbien??null,datemut:x?.datemut??null,
+  distance_m:x?.distance_m??null,address:x?.address??null,source:x?.source??source,id_mutation:x?.id_mutation??null
 });
 
 async function fetchDvfCandidates(address:string,store:any){
