@@ -183,7 +183,12 @@ export function deterministicScores(a,docs=[],marketMeta={}){
   const confidence=Math.round(documentation*.75+marketReliability*.25);
   const propertyEvidence=Boolean(num(a?.property?.surface_m2)!==null||num(a?.property?.rooms)!==null||text(a?.property?.dpe)||arr(a?.property?.diagnostics).length||arr(a?.property?.assets).length);
   const coproCategories=coverage.categories||{};
-  const coproEvidence=Boolean(coproCategories.ag||coproCategories.accounts||coproCategories.pppt||coproCategories.reglement||coproCategories.synthese||coproCategories.entretien);
+  const coproMetrics=a?.copro_metrics||{};
+  const financeEvidence=["annual_budget","collective_arrears","supplier_debt","cash","works_fund"].some(k=>num(coproMetrics?.[k])!==null);
+  const worksEvidence=[...arr(a?.works?.voted),...arr(a?.works?.discussed),...arr(a?.works?.rejected_or_postponed),...arr(a?.works?.recommended_pppt),...arr(a?.works?.recent_completed)].length>0;
+  const governanceEvidence=arr(a?.copro?.litigation).length>0||arr(a?.copro?.recurring_topics).length>0||Boolean(r.governance_issue||r.litigation);
+  const strongDocEvidence=coverage.score>=60&&coverage.readability>=70&&Boolean(coproCategories.ag||coproCategories.accounts||coproCategories.synthese);
+  const coproEvidence=Boolean(financeEvidence||worksEvidence||governanceEvidence||strongDocEvidence);
   const propertyScore=propertyEvidence?property:null;
   const coproScore=coproEvidence?copro:null;
   const marketScore=officialCount>0?market:null;
