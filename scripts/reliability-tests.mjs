@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import {documentCoverage,prepareDocs,normalizeAnalysis,selectOfficialComparables,applyOfficialMarketData,deterministicScores,num} from '../netlify/lib/reliability-core.mjs';
+import {documentCoverage,prepareDocs,normalizeAnalysis,extractDeterministicFacts,applyDeterministicFacts,selectOfficialComparables,applyOfficialMarketData,deterministicScores,hardenScores,num} from '../netlify/lib/reliability-core.mjs';
 import {partitionUploadDocuments} from '../netlify/lib/upload-core.mjs';
 
 assert.equal(num(null),null,'Une valeur nulle doit rester inconnue et ne jamais devenir zéro');
@@ -22,7 +22,12 @@ const fakeDocs=[
 ];
 const cov=documentCoverage(fakeDocs);
 assert.ok(cov.score>=50,'Un dossier immobilier correctement documenté doit pouvoir franchir le seuil de couverture');
-const scored=deterministicScores({risk_flags:{},copro_metrics:{},property:{asking_price:200000,surface_m2:82,rooms:4,dpe:'C'},market:{estimate_low:190000,estimate_high:210000}},fakeDocs,{officialCount:4});
+const scored=deterministicScores({
+ risk_flags:{},
+ copro_metrics:{annual_budget:140000,collective_arrears:5000,cash:45000,works_fund:30000},
+ property:{asking_price:200000,surface_m2:82,rooms:4,dpe:'C',diagnostics:['Électricité conforme au rapport','DPE C']},
+ market:{estimate_low:190000,estimate_high:210000}
+},fakeDocs,{officialCount:4});
 assert.ok(scored.overall!==null,'Le score global est autorisé lorsque la couverture est suffisante');
 assert.ok(scored.confidence>=scored.documentation*.7,'La confiance doit suivre principalement la qualité documentaire');
 
@@ -47,6 +52,74 @@ const prepared=prepareDocs(many);
 assert.equal(prepared.length,30,'Aucun document ne doit disparaître à cause du budget global');
 assert.ok(prepared.every(d=>d.chars_transmitted>0),'Chaque document doit transmettre du contenu');
 assert.ok(prepared.reduce((s,d)=>s+d.chars_transmitted,0)<=360000,'Le budget global de caractères doit être respecté');
+
+const sanitized=normalizeAnalysis({
+ property:{weaknesses:['Balcon non inclus dans la surface Carrez','Infiltration constatée sur balcon']},
+ copro:{litigation:['Carnet : procédures en cours RAS','Litige judiciaire documenté']},
+ negotiation:{arguments:['Charges 2025 élevées à vérifier','Travaux votés à chiffrer']},
+ executive_summary:{top_risks:['Charges élevées','PV partiellement lisibles']},
+ evidence:[
+   {claim:'Charges 2025 : DECOMPTE.pdf, page 3',status:'FACT'},
+   {claim:'Affirmation sans source',status:'FACT'}
+ ]
+});
+assert.deepEqual(sanitized.property.weaknesses,['Infiltration constatée sur balcon'],'Un balcon hors Carrez ne doit pas être présenté comme une faiblesse');
+assert.deepEqual(sanitized.copro.litigation,['Litige judiciaire documenté'],'RAS ne doit jamais être classé comme litige');
+assert.deepEqual(sanitized.negotiation.arguments,['Travaux votés à chiffrer'],'Les charges ne doivent pas être qualifiées sans benchmark');
+assert.equal(sanitized.evidence[0].status,'FACT','Une référence fichier/page intégrée doit suffire à sourcer un fait');
+assert.equal(sanitized.evidence[1].status,'UNKNOWN','Un fait réellement non sourcé doit être déclassé');
+
+const deterministicDoc=[
+ {name:'DIA-test.pdf',quality:'ok',pages:6,weakPages:0,text:`Nature du bien : Appartement T4
+Superficie « Carrez » : 83,44 m²
+Etage : 2
+Performance énergétique et climatique 106 3 Estimation des coûts annuels d’énergie du logement entre 890 € et 1 240 € par an
+Diagnostic électricité : aucune anomalie`},
+ {name:'DECOMPTE.pdf',quality:'ok',pages:3,weakPages:0,text:`Total des charges sur cette période
+Dont TVA
+Total des provisions appelées
+Reste à percevoir
+1976.66
+264.89
+-1789.97
+186.69`},
+ {name:'1ERTRIM26.pdf',quality:'ok',pages:2,weakPages:0,text:`Montant de l'appel de fonds 444.53 €
+SOLDE DEBITEUR 110.25
+TOTAL A PAYER 554.78`}
+];
+const facts=extractDeterministicFacts(deterministicDoc);
+assert.equal(facts.surface_m2,83.44);
+assert.equal(facts.rooms,4);
+assert.equal(facts.floor,'2e étage');
+assert.equal(facts.dpe,'B','106 kWh/m²/an et 3 kgCO2/m²/an sur >40 m² correspondent à B');
+assert.equal(facts.energy_cost_low,890);
+assert.equal(facts.energy_cost_high,1240);
+assert.equal(facts.lot_annual_charges,1976.66);
+assert.equal(facts.individual_balance,110.25);
+assert.equal(facts.current_call_amount,444.53);
+assert.equal(facts.total_to_pay,554.78);
+const factual=applyDeterministicFacts({property:{surface_m2:50,rooms:2,dpe:'E'},copro_metrics:{}},deterministicDoc);
+assert.equal(factual.property.surface_m2,83.44,'Les faits documentaires déterministes doivent primer');
+assert.equal(factual.property.dpe,'B');
+assert.equal(factual.copro_metrics.individual_balance,110.25);
+
+const withheld={scores:{property:82,copro:95,market:null,documentation:67,confidence:59,overall:null},meta:{score_withheld:true}};
+hardenScores(withheld);
+assert.equal(withheld.scores.overall,null,'Un score global retenu doit rester N/C et ne jamais devenir 0');
+assert.equal(withheld.scores.market,null);
+
+const incompleteRealLike=deterministicScores({
+ risk_flags:{},
+ property:{surface_m2:83.44,rooms:4,dpe:'',diagnostics:['Électricité : aucune anomalie','Termites : absence']},
+ copro_metrics:{lot_annual_charges:1976.66},
+ copro:{litigation:[]},
+ works:{voted:['Travail cité dans carnet'],recent_completed:[]},
+ market:{estimate_low:null,estimate_high:null}
+},partialAgDocs,{officialCount:0});
+assert.equal(incompleteRealLike.property,null,'Sans étiquette DPE vérifiée, le score bien doit rester N/C');
+assert.equal(incompleteRealLike.copro,null,'Des travaux seuls ne justifient pas un score copropriété');
+assert.equal(incompleteRealLike.market,null);
+assert.equal(incompleteRealLike.overall,null);
 
 const analysis=normalizeAnalysis({property:{surface_m2:83.44,title:'Appartement T4'},market:{comparables:[{type:'DVF',price:1}]},risk_flags:{electrical_anomalies:false},evidence:[{claim:'x',status:'FACT',source:''}]});
 assert.equal(analysis.evidence[0].status,'UNKNOWN','Un fait sans source ne doit pas rester FACT');
