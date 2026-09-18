@@ -4,6 +4,8 @@ import {documentCoverage,prepareDocs,normalizeAnalysis,selectOfficialComparables
 const empty=deterministicScores({risk_flags:{},copro_metrics:{},property:{},market:{}},[],{officialCount:0});
 assert.equal(empty.overall,null,'Un dossier sans document ne doit jamais avoir de score global');
 assert.equal(empty.documentation,0,'Un dossier sans document doit avoir une couverture documentaire nulle');
+assert.equal(empty.copro,null,'La copropriété ne doit pas être scorée sans pièces de copropriété');
+assert.equal(empty.market,null,'Le marché ne doit pas être scoré sans comparables officiels');
 
 const fakeDocs=[
  {name:'pv.pdf',quality:'ok',pages:6,weakPages:0,text:('PROCÈS-VERBAL ASSEMBLÉE GÉNÉRALE. Approbation des comptes. Budget prévisionnel. '+ 'dépenses tantièmes résolution '.repeat(1500))},
@@ -14,7 +16,7 @@ const fakeDocs=[
 ];
 const cov=documentCoverage(fakeDocs);
 assert.ok(cov.score>=50,'Un dossier immobilier correctement documenté doit pouvoir franchir le seuil de couverture');
-const scored=deterministicScores({risk_flags:{},copro_metrics:{},property:{asking_price:200000},market:{estimate_low:190000,estimate_high:210000}},fakeDocs,{officialCount:4});
+const scored=deterministicScores({risk_flags:{},copro_metrics:{},property:{asking_price:200000,surface_m2:82,rooms:4,dpe:'C'},market:{estimate_low:190000,estimate_high:210000}},fakeDocs,{officialCount:4});
 assert.ok(scored.overall!==null,'Le score global est autorisé lorsque la couverture est suffisante');
 assert.ok(scored.confidence>=scored.documentation*.7,'La confiance doit suivre principalement la qualité documentaire');
 
