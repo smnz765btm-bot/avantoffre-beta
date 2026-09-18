@@ -37,8 +37,9 @@ export default async(req:Request,_context:Context)=>{
       const error=
         code==="MODEL_OUTPUT"?"Le rapport a été interrompu avant sa finalisation. Relancez l’analyse : les documents peuvent rester sélectionnés.":
         code==="PROVIDER_RATE"?"Le moteur d’analyse est momentanément saturé. Réessayez dans quelques minutes.":
-        code==="INPUT_TOO_LARGE"?"Le dossier transmis est trop volumineux pour une seule analyse. Retirez les pièces en double puis relancez.":
-        "L'analyse n'a pas pu être finalisée. Relancez-la : vos documents peuvent rester sélectionnés.";
+        code==="INPUT_TOO_LARGE"?"Le dossier transmis est trop volumineux pour une seule analyse. ReVisite a déjà tenté une version compacte automatiquement.":
+        code==="PROVIDER_TRANSIENT"?"Le moteur d'analyse a rencontré une indisponibilité temporaire malgré la tentative de secours automatique.":
+        "L'analyse n'a pas pu être finalisée malgré la tentative de secours automatique.";
       await Promise.allSettled([store.delete(`input-${jobId}`),store.delete(`input-meta-${jobId}`),store.delete(jobId)]);
       return json({status:"error",error,error_code:code},500);
     }
