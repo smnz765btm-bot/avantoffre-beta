@@ -33,8 +33,14 @@ export default async(req:Request,_context:Context)=>{
       return json(job);
     }
     if(job.status==="error"){
+      const code=String(job.error_code||"ENGINE");
+      const error=
+        code==="MODEL_OUTPUT"?"Le rapport a été interrompu avant sa finalisation. Relancez l’analyse : les documents peuvent rester sélectionnés.":
+        code==="PROVIDER_RATE"?"Le moteur d’analyse est momentanément saturé. Réessayez dans quelques minutes.":
+        code==="INPUT_TOO_LARGE"?"Le dossier transmis est trop volumineux pour une seule analyse. Retirez les pièces en double puis relancez.":
+        "L'analyse n'a pas pu être finalisée. Relancez-la : vos documents peuvent rester sélectionnés.";
       await Promise.allSettled([store.delete(`input-${jobId}`),store.delete(`input-meta-${jobId}`),store.delete(jobId)]);
-      return json({status:"error",error:"L'analyse n'a pas pu être finalisée. Relancez-la : vos documents peuvent rester sélectionnés."},500);
+      return json({status:"error",error,error_code:code},500);
     }
     return json(job);
   }catch(err){console.error("ReVisite status error",err);return json({error:"Impossible de lire l'état de l'analyse."},500)}
