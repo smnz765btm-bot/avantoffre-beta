@@ -47,7 +47,7 @@ jobs:
           PY
       - name: Run production browser flow
         run: |
-          cat > /tmp/e2e.mjs <<'JS'
+          cat > ./e2e.mjs <<'JS'
           import { chromium } from 'playwright';
           const browser=await chromium.launch({headless:true});
           const page=await browser.newPage();
@@ -67,4 +67,4 @@ jobs:
           console.log('CACHE/RETRY FLOW OK');
           await browser.close();
           JS
-          node /tmp/e2e.mjs
+          node ./e2e.mjs
