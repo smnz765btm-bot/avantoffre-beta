@@ -287,6 +287,7 @@ export function parseStaticDvfCsv(csv,{lat,lon,maxDistanceM=1200,source='data.go
     out.push({
       valeurfonc:price,sbati:surface,libtypbien:type.toUpperCase(),codtypbien:type==='Appartement'?'121':'111',
       datemut:String(row[ix.date_mutation]||''),distance_m,source,
+      rooms:ix.nombre_pieces_principales===undefined?null:frNumber(row[ix.nombre_pieces_principales]),
       address:[num,voie].filter(Boolean).join(' '),id_mutation:String(row[ix.id_mutation]||'')
     });
   }
@@ -299,67 +300,128 @@ function percentile(xs,p){const a=xs.filter(Number.isFinite).sort((x,y)=>x-y);if
 
 function inferKind(property={}){const s=(text(property.title)+' '+text(property.property_analysis)+' '+text(property.floor)).toLowerCase();if(/maison|villa|pavillon/.test(s))return'house';if(/appartement|studio|\bt[1-9]\b|étage|etage/.test(s))return'apartment';return null;}
 
-export function selectOfficialComparables(candidates=[],property={}){
-  const surface=num(property.surface_m2),kind=inferKind(property);
+function normalizedOfficialCandidates(candidates=[],property={}){
+  const surface=num(property.surface_m2),kind=inferKind(property),targetRooms=num(property.rooms);
   let list=arr(candidates).map(c=>{
     const price=num(c.valeurfonc??c.price),surf=num(c.sbati??c.surface),type=String(c.libtypbien??c.type??''),code=String(c.codtypbien??'');
     const ckind=/APPART/i.test(type)||code==='121'?'apartment':/MAISON/i.test(type)||code==='111'?'house':null;
-    const date=String(c.datemut??c.date??'');
+    const date=String(c.datemut??c.date??''),distance=num(c.distance_m),rooms=num(c.rooms??c.nombre_pieces_principales??c.nbpprinc);
     const pm=price&&surf?price/surf:null;
-    return{raw:c,price,surface:surf,type,kind:ckind,date,price_m2:pm};
+    return{raw:c,price,surface:surf,type,kind:ckind,date,price_m2:pm,distance,rooms,targetRooms};
   }).filter(x=>x.price&&x.surface&&x.surface>10&&x.price_m2&&x.price_m2>500&&x.price_m2<15000&&x.price<5000000);
   if(kind)list=list.filter(x=>!x.kind||x.kind===kind);
-  if(surface){const tight=list.filter(x=>Math.abs(x.surface-surface)/surface<=.30);if(tight.length>=3)list=tight;else{const wide=list.filter(x=>Math.abs(x.surface-surface)/surface<=.50);if(wide.length>=2)list=wide;}}
-  list.sort((a,b)=>{
-    const sd=surface?(Math.abs(a.surface-surface)-Math.abs(b.surface-surface)):0;
-    if(sd!==0)return sd;
-    return String(b.date).localeCompare(String(a.date));
+  if(surface){
+    const tight=list.filter(x=>Math.abs(x.surface-surface)/surface<=.30);
+    if(tight.length>=8)list=tight;
+    else{
+      const wide=list.filter(x=>Math.abs(x.surface-surface)/surface<=.50);
+      if(wide.length>=5)list=wide;
+    }
+  }
+  const seen=new Set();
+  list=list.filter(x=>{
+    const key=text(x.raw?.id_mutation)||[x.date,x.price,x.surface,text(x.raw?.address)].join('|');
+    if(seen.has(key))return false;seen.add(key);return true;
   });
-  return list.slice(0,5).map(x=>{
-    const distance=num(x.raw?.distance_m),address=text(x.raw?.address),source=text(x.raw?.source)||'Cerema — DVF+ open-data';
+  return list;
+}
+
+function officialMarketReference(candidates=[],property={}){
+  const list=normalizedOfficialCandidates(candidates,property),surface=num(property.surface_m2);
+  if(!surface||list.length<3)return{pool:list,radius_m:null,sample_count:list.length};
+  const chooseRadius=(radius,min)=>{
+    const rows=list.filter(x=>x.distance===null||x.distance<=radius);
+    return rows.length>=min?rows:null;
+  };
+  const pool=chooseRadius(600,12)||chooseRadius(1000,12)||chooseRadius(1200,8)||list;
+  const pms=pool.map(x=>x.price_m2).filter(Number.isFinite);
+  if(pms.length<3)return{pool,radius_m:null,sample_count:pms.length};
+  const med=median(pms),q25=percentile(pms,.25),q75=percentile(pms,.75),p10=percentile(pms,.10),p90=percentile(pms,.90);
+  const lowPm=Math.max(q25??med,med*.80),highPm=Math.min(q75??med,med*1.20);
+  const low=Math.round(surface*lowPm/1000)*1000,high=Math.round(surface*highPm/1000)*1000;
+  const maxDistance=Math.max(...pool.map(x=>x.distance).filter(Number.isFinite),0);
+  const radius_m=maxDistance?Math.ceil(maxDistance/100)*100:null;
+  const dispersionRatio=p10&&p90?p90/p10:null;
+  return{
+    pool,radius_m,sample_count:pms.length,median_price_m2:med,q25_price_m2:q25,q75_price_m2:q75,
+    p10_price_m2:p10,p90_price_m2:p90,dispersion_ratio:dispersionRatio,low,high
+  };
+}
+
+export function selectOfficialComparables(candidates=[],property={}){
+  const surface=num(property.surface_m2),reference=officialMarketReference(candidates,property),list=reference.pool.length?reference.pool:normalizedOfficialCandidates(candidates,property);
+  const med=reference.median_price_m2??median(list.map(x=>x.price_m2));
+  list.sort((a,b)=>{
+    const as=surface?Math.abs(a.surface-surface)/surface:0,bs=surface?Math.abs(b.surface-surface)/surface:0;
+    const ad=a.distance===null?900:a.distance,bd=b.distance===null?900:b.distance;
+    const ap=med?Math.abs(a.price_m2-med)/med:0,bp=med?Math.abs(b.price_m2-med)/med:0;
+    return (as*2+ad/2500+ap*.35)-(bs*2+bd/2500+bp*.35);
+  });
+  const picked=[],bands={low:false,high:false};
+  for(const x of list){
+    if(picked.length>=5)break;
+    picked.push(x);
+    if(med&&x.price_m2<med*.85)bands.low=true;
+    if(med&&x.price_m2>med*1.15)bands.high=true;
+  }
+  if(med&&list.length>5){
+    const addRepresentative=(predicate)=>{
+      const x=list.filter(predicate).sort((a,b)=>(a.distance??999999)-(b.distance??999999))[0];
+      if(x&&!picked.includes(x)){
+        const replaceIndex=picked.length<5?picked.length:4;
+        picked[replaceIndex]=x;
+      }
+    };
+    if(!bands.low)addRepresentative(x=>x.price_m2<med*.85);
+    if(!bands.high)addRepresentative(x=>x.price_m2>med*1.15);
+  }
+  return picked.slice(0,5).map(x=>{
+    const distance=x.distance,address=text(x.raw?.address),source=text(x.raw?.source)||'Cerema — DVF+ open-data';
     return{
-      label:[address||x.type||'Vente',Math.round(x.surface)+' m²'].filter(Boolean).join(' · '),date:x.date,price:Math.round(x.price),surface:Math.round(x.surface*10)/10,
+      label:[address||x.type||'Vente',Math.round(x.surface)+' m²',x.rooms?Math.round(x.rooms)+' p.':null].filter(Boolean).join(' · '),
+      date:x.date,price:Math.round(x.price),surface:Math.round(x.surface*10)/10,rooms:x.rooms?Math.round(x.rooms):null,
       price_m2:Math.round(x.price_m2),type:'DVF',distance_m:distance,distance_note:distance!==null?`${Math.round(distance)} m env.`:'secteur proche',source
     };
   });
 }
 
 export function applyOfficialMarketData(analysis,candidates=[]){
-  const a=normalizeAnalysis(analysis),comps=selectOfficialComparables(candidates,a.property);
+  const a=normalizeAnalysis(analysis),reference=officialMarketReference(candidates,a.property),comps=selectOfficialComparables(candidates,a.property);
   a.market.offer_low=null;a.market.offer_high=null;
-  if(comps.length){
+  const surface=num(a.property.surface_m2);
+  if(reference.low&&reference.high&&reference.sample_count>=3&&surface){
+    const med=reference.median_price_m2,q25=reference.q25_price_m2,q75=reference.q75_price_m2,p10=reference.p10_price_m2,p90=reference.p90_price_m2;
+    const source=comps[0]?.source||text(candidates?.[0]?.source)||'DVF open-data';
+    const dispersed=reference.dispersion_ratio!==null&&reference.dispersion_ratio>1.55;
     a.market.comparables=comps;
-    a.market.confidence=comps.length>=3?'bonne':'moyenne';
-    const surface=num(a.property.surface_m2),pms=comps.map(c=>num(c.price_m2)).filter(Number.isFinite);
-    if(surface&&pms.length>=2){
-      const q25=percentile(pms,.25),q75=percentile(pms,.75),med=median(pms);
-      const low=Math.round(surface*(q25??med)*.95/1000)*1000,high=Math.round(surface*(q75??med)*1.05/1000)*1000;
-      const source=comps[0]?.source||'DVF open-data';
-      const minPm=Math.min(...pms),maxPm=Math.max(...pms);
-      a.market.dvf_reference={low,high,median_price_m2:Math.round(med),count:comps.length,source};
-      // Official comparables always prevail over an AI-generated price range.
-      a.market.estimate_low=low;a.market.estimate_high=high;
-      const ask=num(a.property.asking_price);
-      if(ask&&high){
-        if(ask>high){
-          const delta=Math.round((ask/high-1)*100);
-          a.market.positioning=`Prix affiché environ ${delta}% au-dessus de la borne haute de la fourchette DVF indicative.`;
-        }else if(ask<low){
-          const delta=Math.round((1-ask/low)*100);
-          a.market.positioning=`Prix affiché environ ${delta}% sous la borne basse de la fourchette DVF indicative.`;
-        }else a.market.positioning='Prix affiché dans la fourchette DVF indicative calculée.';
-      }else a.market.positioning='Fourchette indicative calculée exclusivement à partir des ventes DVF retenues.';
-      a.market.analysis=`${comps.length} ventes DVF officielles retenues · ${Math.round(minPm)} à ${Math.round(maxPm)} €/m² · médiane ${Math.round(med)} €/m². Fourchette indicative pour ${Math.round(surface*100)/100} m² : ${low.toLocaleString('fr-FR')} à ${high.toLocaleString('fr-FR')} €.`;
-    }else{
-      a.market.estimate_low=null;a.market.estimate_high=null;
-      a.market.positioning='Ventes DVF disponibles mais insuffisantes pour calculer une fourchette fiable.';
-      a.market.analysis=a.market.positioning;
-    }
+    a.market.estimate_low=reference.low;a.market.estimate_high=reference.high;
+    a.market.confidence=reference.sample_count>=20&&!dispersed?'bonne':reference.sample_count>=8?'moyenne':'faible';
+    a.market.dvf_reference={
+      low:reference.low,high:reference.high,median_price_m2:Math.round(med),count:comps.length,sample_count:reference.sample_count,
+      radius_m:reference.radius_m,q25_price_m2:Math.round(q25),q75_price_m2:Math.round(q75),
+      p10_price_m2:Math.round(p10),p90_price_m2:Math.round(p90),
+      dispersion_ratio:reference.dispersion_ratio===null?null:Math.round(reference.dispersion_ratio*100)/100,
+      source
+    };
+    const ask=num(a.property.asking_price);
+    if(ask){
+      if(ask>reference.high){
+        const delta=Math.round((ask/reference.high-1)*100);
+        a.market.positioning=`Prix affiché environ ${delta}% au-dessus de l'intervalle central DVF.`;
+      }else if(ask<reference.low){
+        const delta=Math.round((1-ask/reference.low)*100);
+        a.market.positioning=`Prix affiché environ ${delta}% sous l'intervalle central DVF.`;
+      }else a.market.positioning="Prix affiché dans l'intervalle central DVF.";
+    }else a.market.positioning="Intervalle central DVF calculé sans prix affiché à comparer.";
+    const radiusText=reference.radius_m?` dans un rayon d'environ ${reference.radius_m} m`:' dans le secteur';
+    const dispersionText=dispersed?' La dispersion des transactions est forte : les niveaux hauts et bas sont affichés comme contexte, pas comme bornes de valeur.':'';
+    a.market.analysis=`${reference.sample_count} ventes DVF de surfaces comparables${radiusText} · médiane ${Math.round(med)} €/m² · intervalle central ${Math.round(q25)} à ${Math.round(q75)} €/m². Référence indicative pour ${Math.round(surface*100)/100} m² : ${reference.low.toLocaleString('fr-FR')} à ${reference.high.toLocaleString('fr-FR')} €.${dispersionText}`;
   }else{
-    a.market.comparables=[];
+    a.market.comparables=comps;
     a.market.estimate_low=null;a.market.estimate_high=null;
     a.market.confidence='faible';
-    a.market.positioning='Aucun comparable DVF suffisamment proche du bien n’a été retenu.';
+    a.market.dvf_reference={sample_count:reference.sample_count||0,source:comps[0]?.source||null};
+    a.market.positioning='Ventes DVF insuffisantes pour calculer un intervalle central fiable.';
     a.market.analysis=a.market.positioning;
   }
   return a;
