@@ -32,6 +32,32 @@ async function fetchWithTimeout(url:string,init:any,timeoutMs=180000){
   finally{clearTimeout(timer)}
 }
 
+function basicFallbackAnalysis(docs:Doc[],address:string){
+  const received=docs.map(d=>String(d?.name||"document")).slice(0,30);
+  const readable=docs.filter(d=>String(d?.quality||"").toLowerCase()!=="failed"&&String(d?.text||"").trim().length>=80);
+  const partial=docs.filter(d=>String(d?.quality||"").toLowerCase()==="partial").map(d=>String(d?.name||"document"));
+  const sample=readable.map(d=>String(d.text||"").slice(0,25000)).join("\n").replace(/\s+/g," ");
+  const findNumber=(re:RegExp)=>{const m=sample.match(re);if(!m)return null;const n=Number(String(m[1]).replace(/\s/g,"").replace(",","."));return Number.isFinite(n)?n:null};
+  const surface=findNumber(/(?:surface(?:\s+carrez)?|carrez)[^0-9]{0,40}(\d{1,3}(?:[.,]\d{1,2})?)\s*m(?:²|2)/i);
+  const charges=findNumber(/(?:total\s+annuel|charges?\s+(?:annuelles?|du\s+lot))[^0-9]{0,50}(\d{2,6}(?:[\s.]\d{3})*(?:[.,]\d{1,2})?)/i);
+  const dpeMatch=sample.match(/(?:\bDPE\b|performance\s+énergétique)[^A-G]{0,30}\b([A-G])\b/i);
+  const dpe=dpeMatch?String(dpeMatch[1]).toUpperCase():"";
+  const propertyEvidence=[surface?String(surface)+" m²":"",dpe?"DPE "+dpe:""].filter(Boolean);
+  return normalizeAnalysis({
+    property:{title:"",address,asking_price:null,surface_m2:surface,price_per_m2:null,rooms:null,floor:"",dpe,assets:propertyEvidence,weaknesses:["Analyse approfondie temporairement indisponible : seules les données explicitement reconnues sont affichées."],diagnostics:[],property_analysis:"ReVisite a sécurisé les informations directement lisibles sans extrapoler les éléments non vérifiés."},
+    market:{estimate_low:null,estimate_high:null,offer_low:null,offer_high:null,confidence:"faible",positioning:"Marché non calculé en mode de secours.",comparables:[],analysis:"Aucune estimation n’est produite sans analyse complète et comparables fiables."},
+    copro_metrics:{annual_budget:null,collective_arrears:null,cash:null,works_fund:null,lot_annual_charges:charges},
+    copro:{financial_analysis:"Mode de secours : la situation financière détaillée de la copropriété n’est pas scorée.",strengths:[],weaknesses:[]},
+    works:{voted:[],discussed:[],recommended_pppt:[],analysis:"Les décisions de travaux ne sont pas déduites sans lecture structurée complète."},
+    buyer_blocks:{diagnostic_works:{summary:"Non chiffré en mode de secours.",items:[],total_budget_low:null,total_budget_high:null},future_copro_costs:{summary:"Non chiffré en mode de secours.",items:[]},real_acquisition_budget:{purchase_price:null,acquisition_fees_estimate:null,private_works_low:null,private_works_high:null,known_total_low:null,known_total_high:null,summary:"Budget total non calculé en mode de secours."},before_offer_checks:{summary:"Relire les pièces signalées comme partielles avant offre.",checks:partial.slice(0,4),inconsistencies:[]}},
+    documents:{received,missing_or_to_obtain:[],quality_notes:partial.map(n=>n+" — lecture partielle")},
+    risk_flags:{},
+    executive_summary:{headline:"Analyse sécurisée en mode de secours",overview:"Le rapport complet n’a pas pu être généré automatiquement. ReVisite affiche uniquement les données directement reconnues et ne produit aucun score global artificiel.",top_strengths:propertyEvidence,top_risks:partial.length?[String(partial.length)+" document(s) à lecture partielle"]:[],what_changes_the_decision:[]},
+    negotiation:{recommended_strategy:"Ne pas fonder une offre sur le seul mode de secours.",arguments:[],conditions_before_offer:[]},
+    evidence:[],questions_before_offer:[],
+    verdict:{label:"À documenter avant offre",summary:"Rapport partiel sécurisé : aucune conclusion forte n’est produite sans analyse complète.",vigilance:"forte",why:"Certaines étapes du moteur d’analyse n’ont pas abouti.",go_if:[],stop_if:[]}
+  });
+}
 async function fetchJson(url:string,timeoutMs=9000){
   const controller=new AbortController();
   const timer=setTimeout(()=>controller.abort(),timeoutMs);
