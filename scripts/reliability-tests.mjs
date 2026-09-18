@@ -1,5 +1,10 @@
 import assert from 'node:assert/strict';
-import {documentCoverage,prepareDocs,normalizeAnalysis,selectOfficialComparables,applyOfficialMarketData,deterministicScores} from '../netlify/lib/reliability-core.mjs';
+import {documentCoverage,prepareDocs,normalizeAnalysis,selectOfficialComparables,applyOfficialMarketData,deterministicScores,num} from '../netlify/lib/reliability-core.mjs';
+
+assert.equal(num(null),null,'Une valeur nulle doit rester inconnue et ne jamais devenir zéro');
+assert.equal(num(undefined),null,'Une valeur absente doit rester inconnue');
+assert.equal(num(''),null,'Une chaîne vide doit rester inconnue');
+assert.equal(num('1976.66'),1976.66,'Une valeur numérique explicite doit rester exploitable');
 
 const empty=deterministicScores({risk_flags:{},copro_metrics:{},property:{},market:{}},[],{officialCount:0});
 assert.equal(empty.overall,null,'Un dossier sans document ne doit jamais avoir de score global');
