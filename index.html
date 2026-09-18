@@ -19,12 +19,25 @@ async function extractFile(f){
   }
   const weak=pages.filter(x=>x.chars<AO_MIN_NATIVE_PAGE_CHARS);
   const weakRatio=pdf.numPages?weak.length/pdf.numPages:1;
-  const ocrBudget=Math.min(weak.length,(totalNative<5000||weakRatio>.35)?8:2);
+  const isAg=/(?:^|[_\s.-])(?:pv|ag)(?:[_\s.-]|$)|assembl/i.test(f.name);
+  const isDiagnostic=/\bDIA\b|diagnostic/i.test(f.name);
+  const dpeTargets=new Set();
+  if(isDiagnostic){
+    for(const item of pages){
+      const m=String(item.native||'').match(/Rapport\s+DPE\s+(\d{1,3})/i);
+      if(m){const n=Number(m[1]);if(n>=1&&n<=pdf.numPages)dpeTargets.add(n)}
+    }
+  }
+  // AG/PV scannés : OCR de toutes les pages faibles (jusqu'à 24) pour éviter
+  // de conclure à partir d'un simple échantillon. DPE : OCR ciblé de la page-étiquette.
+  const ocrBudget=Math.min(weak.length,isAg?24:(totalNative<5000||weakRatio>.35)?10:2);
   const ocrTargets=[];
-  if(ocrBudget>0){
+  if(isAg)ocrTargets.push(...weak.slice(0,ocrBudget));
+  else if(ocrBudget>0){
     if(weak.length<=ocrBudget)ocrTargets.push(...weak);
     else for(let i=0;i<ocrBudget;i++){const pos=Math.round(i*(weak.length-1)/Math.max(1,ocrBudget-1));const item=weak[pos];if(item&&!ocrTargets.includes(item))ocrTargets.push(item)}
   }
+  for(const pageNo of dpeTargets){const item=pages.find(x=>x.page===pageNo);if(item&&!ocrTargets.includes(item))ocrTargets.push(item)}
   let ocrPages=0;
   for(const item of ocrTargets){
     try{const page=await pdf.getPage(item.page);const ocr=await aoOcrPage(page,f.name,item.page,pdf.numPages);ocrPages++;if(aoCleanLen(ocr)>aoCleanLen(item.finalText)){item.finalText=ocr;item.method='ocr';item.chars=aoCleanLen(ocr)}}catch{item.method='ocr-failed'}
@@ -35,32 +48,44 @@ async function extractFile(f){
   return{name:f.name,text,pages:pdf.numPages,quality,ocrPages,weakPages}
 }
 async function uploadDocs(jobId){
-  const refs=[],MAX_BATCH_CHARS=700000,MAX_BATCH_DOCS=10;let batch=[],batchChars=0,batchIndex=0;
+  const refs=[],issues=[],MAX_BATCH_CHARS=700000,MAX_BATCH_DOCS=10;let batch=[],batchChars=0,batchIndex=0;
   const flush=async()=>{
     if(!batch.length)return;
     status(`Envoi du lot ${batchIndex+1}…`);
     const r=await fetch('/api/upload-document',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({jobId,batchIndex,documents:batch})});
     let j={};try{j=await r.json()}catch{}
     if(!r.ok)throw Error(j.error||'Impossible d’envoyer les documents.');
-    if(j.ref)refs.push(j.ref);batch=[];batchChars=0;batchIndex++;
+    if(j.ref)refs.push(j.ref);
+    for(const row of (Array.isArray(j.documents)?j.documents:[])){
+      if(row?.accepted===false)issues.push({name:String(row.name||'document'),reason:String(row.error||'Document non exploitable')});
+    }
+    batch=[];batchChars=0;batchIndex++;
   };
   for(let i=0;i<selected.length;i++){
     status(`Lecture ${i+1}/${selected.length} : ${selected[i].name}`);
-    let d;try{d=await extractFile(selected[i])}catch{throw Error(`Impossible de lire ${selected[i].name}. Réenregistrez le PDF puis réessayez.`)}
+    let d;
+    try{d=await extractFile(selected[i])}
+    catch{
+      const issue={name:selected[i].name,reason:'Impossible de lire ce PDF dans le navigateur.'};
+      issues.push(issue);
+      window.dispatchEvent(new CustomEvent('revisite-document-issue',{detail:{index:i,...issue}}));
+      continue;
+    }
     const item={index:i,name:d.name,text:d.text,pages:d.pages,quality:d.quality,ocrPages:d.ocrPages,weakPages:d.weakPages};
     if(batch.length&&(batch.length>=MAX_BATCH_DOCS||batchChars+d.text.length>MAX_BATCH_CHARS))await flush();
     batch.push(item);batchChars+=d.text.length;
   }
-  await flush();return refs;
+  await flush();return{refs,issues};
 }
 const sleep=m=>new Promise(r=>setTimeout(r,m));
 $('#analyze').onclick=async()=>{
   const b=$('#analyze');b.disabled=true;$('#loading').classList.remove('hidden');currentShareUrl='';$('#shareAnalysis').classList.add('hidden');$('#shareLinkBox').classList.add('hidden');$('#shareUrl').value='';
   try{
     if(!selected.length&&!$('#url').value.trim()&&!$('#address').value.trim())throw Error('Ajoutez au moins une adresse, une annonce ou un document.');
-    const jobId=`ao_${Date.now()}_${Math.random().toString(36).slice(2)}`,documentRefs=await uploadDocs(jobId);
+    const jobId=`ao_${Date.now()}_${Math.random().toString(36).slice(2)}`,uploaded=await uploadDocs(jobId),documentRefs=uploaded.refs,documentIssues=uploaded.issues;
+    if(selected.length&&documentRefs.length===0&&!$('#url').value.trim()&&!$('#address').value.trim())throw Error('Aucun document n’a pu être exploité. Ajoutez une adresse ou fournissez au moins un PDF lisible.');
     status('Recoupement du bien, des documents et du marché…');
-    let r=await fetch('/api/analyze-background',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({jobId,listingUrl:$('#url').value,address:$('#address').value,extra:$('#extra').value,documentRefs})});
+    let r=await fetch('/api/analyze-background',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({jobId,listingUrl:$('#url').value,address:$('#address').value,extra:$('#extra').value,documentRefs,documentIssues})});
     let start={};try{start=await r.json()}catch{}
     if(!r.ok)throw Error(start.error||`Impossible de lancer l’analyse (${r.status}).`);
     if(start.status==='done'&&start.result){render(start.result);$('#loading').classList.add('hidden');return}
