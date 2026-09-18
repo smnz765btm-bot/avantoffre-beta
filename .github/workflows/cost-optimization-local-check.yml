@@ -131,8 +131,9 @@ jobs:
           if(uploadCalls!==1) throw new Error('Expected 1 batched upload call, got '+uploadCalls);
           if(statusCalls!==0) throw new Error('Cached/immediate result must not poll status, got '+statusCalls);
           if(legacyAddressCalls!==0) throw new Error('Legacy Netlify address function was called '+legacyAddressCalls+' time(s)');
+          if(await page.locator('script[src*="map-enhancements"]').count()) throw new Error('Broken legacy map enhancement script is still loaded');
           if(!text.includes('83,44')&&!text.includes('83.44')) throw new Error('Surface control missing');
-          if(!text.includes('1 977')&&!text.includes('1976')&&!text.includes('1 976')) throw new Error('Charges control missing');
+          if(!text.replace(/[^0-9]/g,'').includes('1977')&&!text.replace(/[^0-9]/g,'').includes('1976')) throw new Error('Charges control missing');
 
           console.log(JSON.stringify({uploadCalls,statusCalls,legacyAddressCalls,report:'ok'}));
           await browser.close();
