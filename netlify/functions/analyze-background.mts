@@ -117,6 +117,30 @@ async function fetchDvfCandidates(address:string,store:any){
         }
       }catch{}
     }
+    if(citycode&&depcode){
+      try{
+        const currentYear=new Date().getUTCFullYear(),acc:any[]=[],seen=new Set<string>();
+        for(let y=currentYear-1;y>=currentYear-3;y--){
+          try{
+            const url=`https://files.data.gouv.fr/geo-dvf/latest/csv/${y}/communes/${depcode}/${citycode}.csv`;
+            const csv=await fetchText(url,18000);
+            const rows=parseStaticDvfCsv(csv,{lat,lon,maxDistanceM:1200,source:"data.gouv.fr — DVF Etalab"});
+            for(const row of rows){
+              const key=String(row?.id_mutation||"")+"|"+String(row?.libtypbien||"")+"|"+String(row?.sbati||"")+"|"+String(row?.valeurfonc||"");
+              if(seen.has(key))continue;
+              seen.add(key);acc.push(slimDvfRow(row,"data.gouv.fr — DVF Etalab"));
+            }
+            if(acc.length>=30)break;
+          }catch{}
+        }
+        acc.sort((a,b)=>(Number(a?.distance_m)||999999)-(Number(b?.distance_m)||999999)||String(b?.datemut||"").localeCompare(String(a?.datemut||"")));
+        if(acc.length){
+          const result:any={status:"ok",candidates:acc.slice(0,120),source:"data.gouv.fr — DVF Etalab",lat,lon,cache_hit:false,expires_at:expiresIn(1000*60*60*24)};
+          try{await store.setJSON(cacheKey,result)}catch{}
+          return result;
+        }
+      }catch{}
+    }
     return{status:"unavailable",candidates:[],source:"",lat,lon,cache_hit:false};
   }catch{return{status:"unavailable",candidates:[],source:"",cache_hit:false}}
 }
