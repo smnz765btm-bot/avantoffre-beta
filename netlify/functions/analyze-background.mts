@@ -109,9 +109,9 @@ async function fetchDvfCandidates(address:string,store:any){
         const u=new URL("/dvf_opendata/mutations/",base);
         u.searchParams.set("in_bbox",bbox);u.searchParams.set("anneemut_min",String(year));u.searchParams.set("codtypbien","111,121");u.searchParams.set("page_size","120");u.searchParams.set("ordering","-datemut");
         const d:any=await fetchJson(u.toString(),10000);
-        const rows=(Array.isArray(d?.results)?d.results:Array.isArray(d)?d:[]).slice(0,120).map(slimDvfRow);
+        const rows=(Array.isArray(d?.results)?d.results:Array.isArray(d)?d:[]).slice(0,120).map((x:any)=>slimDvfRow(x,"Cerema — DVF+ open-data"));
         if(rows.length){
-          const result:any={status:"ok",candidates:rows,source:base,lat,lon,cache_hit:false,expires_at:expiresIn(1000*60*60*24)};
+          const result:any={status:"ok",candidates:rows,source:"Cerema — DVF+ open-data",lat,lon,cache_hit:false,expires_at:expiresIn(1000*60*60*24)};
           try{await store.setJSON(cacheKey,result)}catch{}
           return result;
         }
