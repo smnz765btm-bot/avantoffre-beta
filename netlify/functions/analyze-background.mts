@@ -148,7 +148,7 @@ async function fetchDvfCandidates(address:string,store:any){
 function dvfPromptRows(rows:any[]){
   return rows.slice(0,24).map((x:any)=>{
     const p=num(x?.valeurfonc),s=num(x?.sbati),pm=p&&s?Math.round(p/s):null;
-    return [x?.datemut||"?",x?.libtypbien||x?.codtypbien||"bien",p?`${Math.round(p)}€`:"prix ?",s?`${s}m²`:"surface ?",pm?`${pm}€/m²`:""].filter(Boolean).join(" | ");
+    return [x?.datemut||"?",x?.address||x?.libtypbien||x?.codtypbien||"bien",p?`${Math.round(p)}€`:"prix ?",s?`${s}m²`:"surface ?",pm?`${pm}€/m²`:"",x?.distance_m!=null?`${Math.round(Number(x.distance_m))}m env.`:""].filter(Boolean).join(" | ");
   }).join("\n");
 }
 
