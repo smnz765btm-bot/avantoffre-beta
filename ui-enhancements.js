@@ -21,32 +21,25 @@ function installUploadMonitor(){if(window.__aoUploadMonitor)return;window.__aoUp
 function failures(includeMissing=false){const names=fileNamesFromRows(),out=[];names.forEach((name,i)=>{const s=readState.get(i);if(s?.status==='failed')out.push({...s,index:i});else if(includeMissing&&!s)out.push({name,index:i,status:'failed',reason:'Fichier non traité',solution:'Réimportez le document puis relancez l’analyse.',kind:'bad'})});return out}
 function warningHtml(list,forReport=false){if(!list.length)return'';const partialOnly=list.every(x=>x.kind==='warn');const critical=list.some(x=>isPv(x.name));const title=partialOnly?'⚠ Lecture partielle de certains documents':critical?'⚠ PV d’AG non exploitable : analyse copropriété incomplète':'⚠ Certains documents n’ont pas pu être exploités';return `<div class="ao-readalert ${critical?'critical':''} ${forReport?'report':''}"><strong>${title}</strong><ul>${list.map(x=>`<li><span class="ao-file">${esc(x.name)}</span> — ${esc(x.reason)} <span class="ao-solution">${esc(x.solution)}</span></li>`).join('')}</ul>${critical?'<span class="ao-solution"><b>Important :</b> seules les informations effectivement lisibles sont prises en compte dans les conclusions copropriété.</span>':''}</div>`}
 function renderReadWarnings(final=false){
-  const list=failures(final),html=warningHtml(list,false),reportHtml=warningHtml(list,true);
+  const list=failures(final),html=warningHtml(list,false);
   const side=document.querySelector('.sideCard');
   if(side){
     let el=document.querySelector('#aoReadWarning');
     if(!list.length){el?.remove()}
     else{
       if(!el){el=document.createElement('div');el.id='aoReadWarning';document.querySelector('#analyze')?.before(el)}
-      if(el&&el.innerHTML!==html){el.innerHTML=html}
+      if(el&&el.innerHTML!==html)el.innerHTML=html;
     }
   }
+  // Nettoyage défensif des anciennes alertes du rapport. Le rapport n'affiche
+  // plus qu'un unique bandeau de périmètre documentaire via reportScope().
   const report=document.querySelector('#report');
-  if(report&&!report.classList.contains('hidden')){
-    const legacy=[...report.querySelectorAll('.ao-readalert.report')];
-    let el=report.querySelector('#aoReportReadWarning');
-    if(!el&&legacy.length){el=legacy.shift();el.id='aoReportReadWarning'}
-    legacy.forEach(x=>{if(x!==el)x.remove()});
-    if(!list.length){el?.remove();return}
-    const hero=report.querySelector('.reportHero');if(!hero)return;
-    if(!el){el=document.createElement('div');el.id='aoReportReadWarning';el.className='ao-report-warning-host';hero.before(el)}
-    if(el.innerHTML!==reportHtml)el.innerHTML=reportHtml;
-  }
+  if(report)report.querySelectorAll('.ao-readalert.report,#aoReportReadWarning,.ao-report-warning-host').forEach(x=>x.remove());
 }
 function setupConsent(){const btn=document.querySelector('#analyze');if(!btn||document.querySelector('#aoConsent'))return;const note=document.createElement('div');note.id='aoConsent';note.className='ao-consent';note.innerHTML='<span><b>Périmètre documentaire.</b> ReVisite analyse uniquement les pièces transmises ; un document absent ou illisible peut limiter certaines conclusions.</span>';btn.before(note)}
 function simplifyScores(){const grid=document.querySelector('#scores');if(!grid)return;const cards=[...grid.querySelectorAll('.scoreCard')];if(cards.length<4)return;const dossier=cards.find(c=>/Dossier/i.test(c.textContent||''))||cards[3];const m=(dossier.textContent||'').match(/(\d{1,3})\s*\/\s*100/),doc=m?+m[1]:null;dossier.style.display='none';grid.classList.add('simplifiedScores');let label=doc==null?'à confirmer':doc>=85?'très bonne':doc>=70?'bonne':doc>=55?'moyenne':doc>=40?'limitée':'faible';let info=document.querySelector('#analysisConfidence');if(!info){info=document.createElement('div');info.id='analysisConfidence';info.className='analysisConfidence';grid.after(info)}info.innerHTML=`<span class="confidenceDot"></span><b>Fiabilité de l’analyse : ${label}</b> — calculée selon les pièces effectivement analysées.`}
 function softenVigilance(){const title=[...document.querySelectorAll('.chipBox h3')].find(x=>/vigilance/i.test(x.textContent||''));if(title)title.textContent='Points à connaître';const risks=document.querySelector('#risks');if(!risks)return;[...risks.children].forEach(ch=>{const t=(ch.textContent||'').toLowerCase();if(/1er.*(sans ascenseur|absence d.ascenseur)|premier.*(sans ascenseur|absence d.ascenseur)|dernier étage sans ascenseur/.test(t)&&!/3e|4e|5e|6e|troisième|quatrième|cinquième|sixième/.test(t))ch.remove();else if(/sans ascenseur|absence d.ascenseur/.test(t)&&!/étage élevé|3e|4e|5e|6e|troisième|quatrième|cinquième|sixième/.test(t)){ch.classList.remove('warn');ch.style.background='#eef4f6';ch.style.color='#526a7b'}})}
-function reportScope(){const report=document.querySelector('#report');if(!report||report.classList.contains('hidden')||document.querySelector('#aoScope'))return;const top=report.querySelector('.reportHero');if(!top)return;const unread=failures(true),d=document.createElement('div');d.id='aoScope';d.className='ao-scope '+(unread.length?'bad':'');d.innerHTML=`<b>Périmètre documentaire${unread.length?' — lecture partielle':''}</b><br>Rapport établi à partir des documents effectivement lisibles et des sources externes accessibles à la date de l’analyse. ${unread.length?`${unread.length} fichier(s) n’ont pas pu être exploités intégralement et sont signalés ci-dessus.`:'Les fichiers transmis ont été pris en compte par le moteur de lecture.'} ReVisite ne peut pas analyser une information contenue dans une pièce absente, inaccessible ou techniquement illisible.`;top.before(d);renderReadWarnings(true)}
+function reportScope(){const report=document.querySelector('#report');if(!report||report.classList.contains('hidden'))return;const top=report.querySelector('.reportHero');if(!top)return;const unread=failures(true),partial=unread.filter(x=>x.kind==='warn'),critical=unread.filter(x=>x.kind!=='warn');let d=document.querySelector('#aoScope');if(!d){d=document.createElement('div');d.id='aoScope';top.before(d)}const key=[partial.length,critical.length,fileNamesFromRows().length].join(':');if(d.dataset.key===key)return;d.dataset.key=key;d.className='ao-scope '+(critical.length?'bad':partial.length?'partial':'');const total=fileNamesFromRows().length;const headline=critical.length?'Périmètre documentaire incomplet':partial.length?'Périmètre documentaire — lecture partielle':'Périmètre documentaire complet';const detail=critical.length?`${critical.length} document(s) non exploitable(s).`:partial.length?`${partial.length} document(s) partiellement lisible(s), pris en compte uniquement sur les éléments effectivement extraits.`:`${total||'Tous les'} document(s) transmis ont été pris en compte.`;d.innerHTML=`<b>${headline}</b><br><span>${detail} ReVisite n’extrapole pas les informations absentes ou illisibles.</span>`}
 function compact(){document.querySelectorAll('#report .pane:not(#detail) .reportCard>.summary').forEach(p=>{if(p.dataset.compacted||p.textContent.trim().length<240)return;p.dataset.compacted='1';p.classList.add('ao-clamped');const b=document.createElement('button');b.className='ao-readmore';b.textContent='Voir le détail';b.onclick=()=>{const o=p.classList.toggle('ao-clamped');b.textContent=o?'Voir le détail':'Réduire'};p.after(b)})}
 
 let aoLocationBusy=false;
@@ -71,7 +64,7 @@ async function addLocationBlock(){
   }catch(e){holder.remove()}finally{aoLocationBusy=false}
 }
 
-function polish(){simplifyScores();softenVigilance();reportScope();compact();addLocationBlock();if(!document.querySelector('#report')?.classList.contains('hidden'))renderReadWarnings(true)}
+function polish(){simplifyScores();softenVigilance();reportScope();compact();addLocationBlock();if(!document.querySelector('#report')?.classList.contains('hidden'))renderReadWarnings(false)}
 function init(){installUploadMonitor();setupAddress();setupConsent();const list=document.querySelector('#filesList');if(list)new MutationObserver(()=>requestAnimationFrame(renderFileStates)).observe(list,{childList:true});document.querySelector('#files')?.addEventListener('change',()=>setTimeout(()=>{readState.clear();renderFileStates();renderReadWarnings(false)},30));renderFileStates();const report=document.querySelector('#report');if(report)new MutationObserver(()=>requestAnimationFrame(polish)).observe(report,{childList:true,subtree:true,attributes:true});polish()}
 if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',init);else init();
 })();
