@@ -27,3 +27,21 @@ jobs:
             echo "$Y HTTP=$CODE SIZE=$SIZE"
             if [ "$CODE" = "200" ]; then head -n 3 "/tmp/$Y.csv"; fi
           done
+          python3 - <<'PY'
+import csv, math
+lat0,lon0=43.642529,1.456254
+rows=[]
+with open('/tmp/2025.csv',encoding='utf-8') as fh:
+    for r in csv.DictReader(fh):
+        if r.get('type_local')!='Appartement': continue
+        try:
+            lat=float(r['latitude']); lon=float(r['longitude']); surf=float(r['surface_reelle_bati']); price=float(r['valeur_fonciere'])
+        except: continue
+        dlat=math.radians(lat-lat0); dlon=math.radians(lon-lon0)
+        a=math.sin(dlat/2)**2+math.cos(math.radians(lat0))*math.cos(math.radians(lat))*math.sin(dlon/2)**2
+        dist=6371000*2*math.atan2(math.sqrt(a),math.sqrt(1-a))
+        if dist<=1000 and 58<=surf<=109 and 500<price/surf<15000:
+            rows.append((dist,r['date_mutation'],r['adresse_numero'],r['adresse_nom_voie'],surf,price,round(price/surf),r['id_mutation']))
+print('FILTERED',len(rows))
+for x in sorted(rows)[:20]: print(x)
+PY
