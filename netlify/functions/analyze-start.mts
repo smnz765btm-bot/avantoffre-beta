@@ -13,22 +13,32 @@ function hasUsableOpenAIKey(){
   return split.startsWith("sk-");
 }
 
-async function checkRateLimit(store:any,req:Request){
+async function checkRateLimit(store:any,req:Request,cacheKey:string){
   const ip=(req.headers.get("x-nf-client-connection-ip")||req.headers.get("x-forwarded-for")?.split(",")[0]||"unknown").trim();
   const ipHash=await hash(ip),now=new Date(),day=now.toISOString().slice(0,10),hour=now.toISOString().slice(0,13);
   const globalKey=`rate-global-${day}`,dayKey=`rate-ip-${day}-${ipHash}`,hourKey=`rate-ip-${hour}-${ipHash}`;
-  const [g,d,h]=await Promise.all([store.get(globalKey,{type:"json"}),store.get(dayKey,{type:"json"}),store.get(hourKey,{type:"json"})]);
+  const fingerprint=String(cacheKey||"").replace(/[^a-zA-Z0-9_-]/g,"").slice(-32);
+  const seenKey=fingerprint?`rate-seen-${day}-${ipHash}-${fingerprint}`:"";
+  const [g,d,h,seen]=await Promise.all([
+    store.get(globalKey,{type:"json"}),store.get(dayKey,{type:"json"}),store.get(hourKey,{type:"json"}),
+    seenKey?store.get(seenKey,{type:"json"}):Promise.resolve(null)
+  ]);
+  // Une relance du même dossier dans la même journée ne consomme pas un nouveau quota.
+  // Cela évite qu'un échec technique bloque l'utilisateur pendant ses tests.
+  if(seen&&!isExpired(seen))return{ok:true,retry:true};
   const globalLimit=limitEnv("REVISITE_GLOBAL_DAILY_LIMIT",60),dailyLimit=limitEnv("REVISITE_IP_DAILY_LIMIT",12),hourlyLimit=limitEnv("REVISITE_IP_HOURLY_LIMIT",4);
   if((Number(g?.count)||0)>=globalLimit)return{ok:false,message:"La limite quotidienne de la bêta ReVisite est atteinte. Réessayez demain."};
   if((Number(d?.count)||0)>=dailyLimit)return{ok:false,message:"Vous avez atteint la limite d'analyses autorisées aujourd'hui pour cette bêta."};
-  if((Number(h?.count)||0)>=hourlyLimit)return{ok:false,message:"Plusieurs analyses viennent d'être lancées. Réessayez dans environ une heure."};
+  if((Number(h?.count)||0)>=hourlyLimit)return{ok:false,message:"Plusieurs analyses différentes viennent d'être lancées. Réessayez un peu plus tard."};
   const expiry=expiresIn(1000*60*60*48);
-  await Promise.all([
+  const writes=[
     store.setJSON(globalKey,{count:(Number(g?.count)||0)+1,expires_at:expiry}),
     store.setJSON(dayKey,{count:(Number(d?.count)||0)+1,expires_at:expiry}),
     store.setJSON(hourKey,{count:(Number(h?.count)||0)+1,expires_at:expiry})
-  ]);
-  return{ok:true};
+  ];
+  if(seenKey)writes.push(store.setJSON(seenKey,{cache_key:cacheKey,expires_at:expiry}));
+  await Promise.all(writes);
+  return{ok:true,retry:false};
 }
 
 async function resolveDocuments(store:any,jobId:string,inlineDocs:any[],refs:string[]){
@@ -76,7 +86,7 @@ export default async(req:Request,_context:Context)=>{
       return json({jobId,status:"done",cache_hit:true},202);
     }
 
-    const rate=await checkRateLimit(store,req);if(!rate.ok){await Promise.allSettled(documentRefs.map(ref=>store.delete(ref)));return json({error:rate.message},429)}
+    const rate=await checkRateLimit(store,req,cacheKey);if(!rate.ok){await Promise.allSettled(documentRefs.map(ref=>store.delete(ref)));return json({error:rate.message},429)}
     const expiry=expiresIn(1000*60*60*3),input={listingUrl,address,documents,extra,cacheKey,expires_at:expiry};
     await store.setJSON(jobId,{status:"queued",started_at:new Date().toISOString(),progress:"Analyse en attente",expires_at:expiry});
     await store.setJSON(`input-${jobId}`,input);
