@@ -24,8 +24,14 @@ async function extractFile(f){
   const dpeTargets=new Set();
   if(isDiagnostic){
     for(const item of pages){
-      const m=String(item.native||'').match(/Rapport\s+DPE\s+(\d{1,3})/i);
-      if(m){const n=Number(m[1]);if(n>=1&&n<=pdf.numPages)dpeTargets.add(n)}
+      const native=String(item.native||'');
+      // "Rapport DPE : 1/14" is an internal report page number, not the PDF page.
+      // OCR the actual PDF page containing the DPE marker, plus the following page
+      // when present because the graphical energy label is often split across pages.
+      if(/Rapport\s+DPE|diagnostic\s+de\s+performance\s+[ée]nerg[ée]tique|performance\s+[ée]nerg[ée]tique\s+et\s+climatique/i.test(native)){
+        dpeTargets.add(item.page);
+        if(item.page<pdf.numPages)dpeTargets.add(item.page+1);
+      }
     }
   }
   // AG/PV scannés : OCR de toutes les pages faibles (jusqu'à 24) pour éviter
