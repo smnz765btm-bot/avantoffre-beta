@@ -20,9 +20,14 @@ async function extractFile(f){
   const weak=pages.filter(x=>x.chars<AO_MIN_NATIVE_PAGE_CHARS);
   const weakRatio=pdf.numPages?weak.length/pdf.numPages:1;
   const ocrBudget=Math.min(weak.length,(totalNative<5000||weakRatio>.35)?8:2);
+  const ocrTargets=[];
+  if(ocrBudget>0){
+    if(weak.length<=ocrBudget)ocrTargets.push(...weak);
+    else for(let i=0;i<ocrBudget;i++){const pos=Math.round(i*(weak.length-1)/Math.max(1,ocrBudget-1));const item=weak[pos];if(item&&!ocrTargets.includes(item))ocrTargets.push(item)}
+  }
   let ocrPages=0;
-  for(let i=0;i<ocrBudget;i++){
-    const item=weak[i];try{const page=await pdf.getPage(item.page);const ocr=await aoOcrPage(page,f.name,item.page,pdf.numPages);ocrPages++;if(aoCleanLen(ocr)>aoCleanLen(item.finalText)){item.finalText=ocr;item.method='ocr';item.chars=aoCleanLen(ocr)}}catch{item.method='ocr-failed'}
+  for(const item of ocrTargets){
+    try{const page=await pdf.getPage(item.page);const ocr=await aoOcrPage(page,f.name,item.page,pdf.numPages);ocrPages++;if(aoCleanLen(ocr)>aoCleanLen(item.finalText)){item.finalText=ocr;item.method='ocr';item.chars=aoCleanLen(ocr)}}catch{item.method='ocr-failed'}
   }
   let weakPages=0;const parts=pages.map(item=>{const chars=aoCleanLen(item.finalText);if(chars<AO_MIN_USABLE_PAGE_CHARS)weakPages++;return `\n[PAGE ${item.page} | ${item.method.toUpperCase()}]\n${item.finalText}`});
   let text=parts.join('\n');const totalChars=aoCleanLen(text),allowedWeak=Math.max(1,Math.floor(pdf.numPages*.18));let quality=totalChars<80?'failed':weakPages>allowedWeak?'partial':'ok';
