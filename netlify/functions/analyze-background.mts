@@ -79,13 +79,14 @@ async function fetchText(url:string,timeoutMs=15000){
 
 const slimDvfRow=(x:any,source="Cerema — DVF+ open-data")=>({
   valeurfonc:x?.valeurfonc??null,sbati:x?.sbati??null,libtypbien:x?.libtypbien??null,codtypbien:x?.codtypbien??null,datemut:x?.datemut??null,
-  distance_m:x?.distance_m??null,address:x?.address??null,source:x?.source??source,id_mutation:x?.id_mutation??null
+  distance_m:x?.distance_m??null,address:x?.address??null,source:x?.source??source,id_mutation:x?.id_mutation??null,
+  rooms:x?.rooms??x?.nombre_pieces_principales??x?.nbpprinc??null
 });
 
 async function fetchDvfCandidates(address:string,store:any){
   if(!address)return{status:"not_requested",candidates:[],source:"",cache_hit:false};
   const normalized=address.toLowerCase().replace(/\s+/g," ").trim();
-  const cacheKey=`dvf-cache-v2-${await digest(normalized)}`;
+  const cacheKey=`dvf-cache-v3-${await digest(normalized)}`;
   try{
     const cached:any=await store.get(cacheKey,{type:"json"});
     if(cached&&!isExpired(cached)&&Array.isArray(cached.candidates))return{...cached,cache_hit:true};
