@@ -127,7 +127,8 @@ export default async(req:Request,_context:Context)=>{
     const listingUrl=String(body?.listingUrl||"").trim().slice(0,1200),address=String(body?.address||"").trim().slice(0,300),docs:Doc[]=Array.isArray(body?.documents)?body.documents.slice(0,30):[],extra=String(body?.extra||"").slice(0,7000),cacheKey=String(body?.cacheKey||"").slice(0,100);
     if(!listingUrl&&!address&&docs.length===0)throw new Error("Ajoutez au moins une annonce, une adresse ou un document.");
 
-    const prepared=prepareDocs(docs),preparedChars=prepared.reduce((s:number,d:any)=>s+(Number(d.chars_transmitted)||0),0),dvf:any=await fetchDvfCandidates(address,store);
+    let prepared=prepareDocs(docs),preparedChars=prepared.reduce((s:number,d:any)=>s+(Number(d.chars_transmitted)||0),0);
+    const dvf:any=await fetchDvfCandidates(address,store);
     const officialDvf=dvf.status==="ok"?dvfPromptRows(dvf.candidates):"Aucune donnée DVF+ officielle n'a pu être récupérée automatiquement pour cette analyse.";
 
     const system=`Tu es le moteur ReVisite, outil français d'aide à la décision avant une offre immobilière. Tu dois être utile, simple et surtout factuel.
@@ -172,40 +173,59 @@ Retourne uniquement un objet JSON valide correspondant aux rubriques demandées.
       evidence:[],questions_before_offer:[],verdict:{label:"",summary:"",vigilance:"faible|modérée|forte",why:"",go_if:[],stop_if:[]}
     };
 
-    const user=`ADRESSE DU BIEN:\n${address||"non fournie"}\n\nURL ANNONCE:\n${listingUrl||"non fournie"}\n\nINFORMATIONS COMPLÉMENTAIRES:\n${extra||"aucune"}\n\nVENTES DVF+ OFFICIELLES DU SECTEUR (CANDIDATS BRUTS À FILTRER SELON LE BIEN):\n${officialDvf}\n\nSTRUCTURE JSON ATTENDUE:\n${jsonText(schemaHint)}\n\nDOCUMENTS EXTRAITS:\n${prepared.map((d:any,i:number)=>`\n--- DOCUMENT ${i+1}: ${d.name} | pages=${d.pages??"?"} | lecture=${d.quality||"non qualifiée"} | caractères transmis=${d.chars_transmitted}/${d.chars_source}${d.truncated?" | ÉCHANTILLONNÉ":""} ---\n${d.text}`).join("\n")}`;
+    const buildUser=(preparedDocs:any[],compact=false)=>`ADRESSE DU BIEN:\n${address||"non fournie"}\n\nURL ANNONCE:\n${listingUrl||"non fournie"}\n\nINFORMATIONS COMPLÉMENTAIRES:\n${extra||"aucune"}\n\nVENTES DVF+ OFFICIELLES DU SECTEUR (CANDIDATS BRUTS À FILTRER SELON LE BIEN):\n${officialDvf}\n\nSTRUCTURE JSON ATTENDUE:\n${jsonText(schemaHint)}\n\n${compact?"MODE DE SECOURS COMPACT : sois particulièrement concis et priorise les montants, décisions d’AG, diagnostics, charges, travaux et incohérences.\n\n":""}DOCUMENTS EXTRAITS:\n${preparedDocs.map((d:any,i:number)=>`\n--- DOCUMENT ${i+1}: ${d.name} | pages=${d.pages??"?"} | lecture=${d.quality||"non qualifiée"} | caractères transmis=${d.chars_transmitted}/${d.chars_source}${d.truncated?" | ÉCHANTILLONNÉ":""} ---\n${d.text}`).join("\n")}`;
 
-    // L'analyse documentaire privilégie une restitution structurée et factuelle.
-    // Un raisonnement "medium" sur les gros dossiers peut consommer le budget de sortie
-    // avant que le JSON soit terminé. "low" est plus fiable et moins coûteux ici.
-    const reasoningEffort="low";
-    const payload:any={
-      model,input:[{role:"system",content:[{type:"input_text",text:system}]},{role:"user",content:[{type:"input_text",text:user}]}],
-      tools:listingUrl?[{type:"web_search"}]:[],reasoning:{effort:reasoningEffort},max_output_tokens:12000,
-      text:{format:{type:"json_object"},verbosity:"low"},store:false,prompt_cache_key:"revisite-analysis-v3"
-    };
-    const rsp=await fetch("https://api.openai.com/v1/responses",{method:"POST",headers:{Authorization:`Bearer ${apiKey}`,"Content-Type":"application/json"},body:JSON.stringify(payload)});
-    const raw=await rsp.text();let data:any=null;try{data=raw?JSON.parse(raw):null}catch{}
-    if(!rsp.ok)throw new Error(data?.error?.message||`Erreur moteur (${rsp.status}).`);
-    let outText=data?.output_text;
-    if(!outText&&Array.isArray(data?.output))outText=data.output.flatMap((o:any)=>o.content||[]).filter((c:any)=>c.type==="output_text").map((c:any)=>c.text).join("\n");
-    if(!outText)throw new Error("Aucun rapport exploitable.");
-    if(data?.status==="incomplete"&&data?.incomplete_details?.reason==="max_output_tokens"){
-      throw new Error("REPORT_OUTPUT_LIMIT");
+    let data:any=null,parsed:any=null,totalUsage:any=null,modelAttempts=0,fallbackCompaction=false,lastError:any=null;
+    for(let attempt=1;attempt<=2;attempt++){
+      modelAttempts=attempt;
+      if(attempt===2){
+        prepared=prepareDocs(docs,{maxTotal:180000,maxDoc:30000});
+        preparedChars=prepared.reduce((s:number,d:any)=>s+(Number(d.chars_transmitted)||0),0);
+        fallbackCompaction=true;
+      }
+      const user=buildUser(prepared,attempt===2);
+      const payload:any={
+        model,input:[{role:"system",content:[{type:"input_text",text:system}]},{role:"user",content:[{type:"input_text",text:user}]}],
+        tools:listingUrl?[{type:"web_search"}]:[],reasoning:{effort:"low"},max_output_tokens:12000,
+        text:{format:{type:"json_object"},verbosity:"low"},store:false,prompt_cache_key:"revisite-analysis-v4"
+      };
+      try{
+        const rsp=await fetchWithTimeout("https://api.openai.com/v1/responses",{method:"POST",headers:{Authorization:`Bearer ${apiKey}`,"Content-Type":"application/json"},body:JSON.stringify(payload)});
+        const raw=await rsp.text();data=null;try{data=raw?JSON.parse(raw):null}catch{}
+        totalUsage=mergeUsage(totalUsage,data?.usage);
+        if(!rsp.ok){
+          const msg=data?.error?.message||`HTTP ${rsp.status}`;
+          const e:any=new Error(msg);e.status=rsp.status;throw e;
+        }
+        if(data?.status==="incomplete"&&data?.incomplete_details?.reason==="max_output_tokens")throw new Error("REPORT_OUTPUT_LIMIT");
+        let outText=data?.output_text;
+        if(!outText&&Array.isArray(data?.output))outText=data.output.flatMap((o:any)=>o.content||[]).filter((x:any)=>x.type==="output_text").map((x:any)=>x.text).join("\n");
+        if(!outText)throw new Error("Aucun rapport exploitable.");
+        parsed=safeJsonFromText(outText);
+        lastError=null;
+        break;
+      }catch(err:any){
+        lastError=err;
+        const msg=String(err?.message||"");
+        const status=Number(err?.status)||0;
+        const canRetry=attempt===1&&(retryableModelFailure(msg)||status>=500);
+        if(!canRetry)break;
+      }
     }
-
-    let analysis=normalizeAnalysis(safeJsonFromText(outText));
+    if(lastError||!parsed)throw lastError||new Error("Aucun rapport exploitable.");
+    let analysis=normalizeAnalysis(parsed);
     if(address)analysis.property.address=address;
     analysis=applyOfficialMarketData(analysis,dvf.candidates||[]);
     const p=analysis.property||{};
     if(p.asking_price&&p.surface_m2&&!p.price_per_m2)p.price_per_m2=Math.round(Number(p.asking_price)/Number(p.surface_m2));
     const officialCount=Array.isArray(analysis?.market?.comparables)?analysis.market.comparables.filter((x:any)=>x?.type==="DVF").length:0;
     const scores=deterministicScores(analysis,docs,{officialCount});
-    await recordUsage(store,data?.usage);
+    await recordUsage(store,totalUsage);
 
     const result={analysis,scores,meta:{
       model,document_count:docs.length,beta:true,generated_at:new Date().toISOString(),
       input_chars:preparedChars,dvf_status:dvf.status,dvf_source:dvf.source||null,dvf_candidate_count:Array.isArray(dvf.candidates)?dvf.candidates.length:0,
-      dvf_cache_hit:Boolean(dvf.cache_hit),usage:data?.usage||null,score_withheld:scores.overall===null,cache_hit:false
+      dvf_cache_hit:Boolean(dvf.cache_hit),usage:totalUsage||null,model_attempts:modelAttempts,fallback_compaction:fallbackCompaction,score_withheld:scores.overall===null,cache_hit:false
     }};
     await store.setJSON(jobId,{status:"done",result,expires_at:expiresIn(1000*60*60*3)});
     if(cacheKey.startsWith("analysis-cache-")){
@@ -215,9 +235,10 @@ Retourne uniquement un objet JSON valide correspondant aux rubriques demandées.
     console.error("ReVisite background error",err);
     const message=String(err?.message||"");
     const error_code=
-      /REPORT_OUTPUT_LIMIT|Réponse IA non structurée/i.test(message)?"MODEL_OUTPUT":
+      /REPORT_OUTPUT_LIMIT|Réponse IA non structurée|Aucun rapport exploitable/i.test(message)?"MODEL_OUTPUT":
       /429|rate limit|quota/i.test(message)?"PROVIDER_RATE":
-      /context|too large|request too large|413/i.test(message)?"INPUT_TOO_LARGE":
+      /context|too long|too large|request too large|413/i.test(message)?"INPUT_TOO_LARGE":
+      /MODEL_TIMEOUT|timeout|aborted|5\d\d|server_error|temporarily unavailable/i.test(message)?"PROVIDER_TRANSIENT":
       "ENGINE";
     if(jobId)await store.setJSON(jobId,{status:"error",error_code,expires_at:expiresIn(1000*60*60)});
   }
