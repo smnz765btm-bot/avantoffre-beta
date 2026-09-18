@@ -1,0 +1,82 @@
+name: ReVisite large dossier one-shot check
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/revisite-large-dossier-once.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  e2e:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Wait for Netlify deployment
+        run: sleep 45
+      - name: Run synthetic large dossier analysis
+        shell: bash
+        run: |
+          set -euo pipefail
+          BASE="https://revisite-demo.netlify.app"
+          JOB="large_e2e_\${GITHUB_RUN_ID}_\${GITHUB_RUN_ATTEMPT}"
+          REFS=()
+
+          make_doc() {
+            local idx="$1" name="$2" seed="$3"
+            local text
+            text=$(python3 - "$seed" <<'PY'
+import sys
+seed=sys.argv[1]
+parts=[]
+for p in range(1,31):
+    body=(seed+" Résolution examinée, montants et décisions à distinguer strictement. ")*18
+    parts.append(f"[PAGE {p} | NATIVE]\\n{body}")
+print("\\n".join(parts))
+PY
+)
+            payload=$(jq -n --arg job "$JOB" --arg name "$name" --arg text "$text" --argjson idx "$idx" \
+              '{jobId:$job,index:$idx,name:$name,text:$text,pages:30,quality:"ok",ocrPages:0,weakPages:0}')
+            http=$(curl -sS -o "/tmp/u$idx.json" -w '%{http_code}' -X POST "$BASE/api/upload-document" \
+              -H 'content-type: application/json' -d "$payload")
+            cat "/tmp/u$idx.json"
+            test "$http" -ge 200 -a "$http" -lt 300
+            ref=$(jq -r '.ref' "/tmp/u$idx.json")
+            test -n "$ref" -a "$ref" != "null"
+            REFS+=("$ref")
+          }
+
+          make_doc 0 "PV_AG_2024.pdf" "Procès-verbal assemblée générale 2024. Approbation des comptes. Budget prévisionnel. Aucun travail majeur voté."
+          make_doc 1 "PV_AG_2025.pdf" "Procès-verbal assemblée générale 2025. Résolutions travaux discutés et décisions votées séparément."
+          make_doc 2 "PV_AG_2026.pdf" "Procès-verbal assemblée générale 2026. Suivi entretien et contrats."
+          make_doc 3 "DIAGNOSTICS.pdf" "Diagnostic de performance énergétique DPE C. Installation électrique sans anomalie majeure. Surface Carrez 83,44 m². Appartement T4."
+          make_doc 4 "DECOMPTE_CHARGES.pdf" "Décompte de charges. Total annuel du lot 1976,66 euros. Charges récupérables et non récupérables distinguées."
+          make_doc 5 "CARNET_ENTRETIEN.pdf" "Carnet d'entretien copropriété. Maintenance ascenseur, toiture, VMC et espaces verts."
+          make_doc 6 "APPEL_FONDS.pdf" "Appel de fonds trimestriel. Fonds travaux loi ALUR. Aucun impayé collectif déduit d'un solde individuel."
+          make_doc 7 "SYNTHESE_COPRO.pdf" "Fiche synthétique copropriété. Budget, fonds travaux et informations générales."
+
+          refs_json=$(printf '%s\n' "\${REFS[@]}" | jq -R . | jq -s .)
+          start=$(jq -n --arg job "$JOB" --argjson refs "$refs_json" \
+            '{jobId:$job,address:"26 chemin de Borderouge 31200 Toulouse",documentRefs:$refs,extra:"Test synthétique gros dossier ReVisite. Rapport concis et factuel."}')
+          http=$(curl -sS -o /tmp/start.json -w '%{http_code}' -X POST "$BASE/api/analyze-background" \
+            -H 'content-type: application/json' -d "$start")
+          cat /tmp/start.json
+          test "$http" -ge 200 -a "$http" -lt 300
+
+          for i in $(seq 1 55); do
+            sleep 8
+            http=$(curl -sS -o /tmp/status.json -w '%{http_code}' "$BASE/api/analyze-status?jobId=$JOB")
+            cat /tmp/status.json
+            status=$(jq -r '.status // empty' /tmp/status.json)
+            if [ "$status" = "done" ]; then
+              jq -e '.result.meta.document_count == 8' /tmp/status.json >/dev/null
+              jq -e '.result.meta.usage.total_tokens > 0' /tmp/status.json >/dev/null
+              echo "ReVisite large dossier E2E OK"
+              exit 0
+            fi
+            if [ "$status" = "error" ]; then exit 1; fi
+          done
+          echo "ReVisite large dossier timeout"
+          exit 1
