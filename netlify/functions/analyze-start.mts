@@ -4,7 +4,7 @@ import { jobStore, expiresIn, isExpired } from "../lib/storage.mjs";
 const json=(body:any,status=200)=>new Response(JSON.stringify(body),{status,headers:{"Content-Type":"application/json; charset=utf-8","Cache-Control":"no-store"}});
 const limitEnv=(key:string,fallback:number)=>{const n=Number(Netlify.env.get(key));return Number.isFinite(n)&&n>0?Math.floor(n):fallback};
 const hash=async(value:string)=>Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256",new TextEncoder().encode(value)))).map(b=>b.toString(16).padStart(2,"0")).join("").slice(0,24);
-const CACHE_VERSION="revisite-analysis-v8";
+const CACHE_VERSION="revisite-analysis-v9";
 
 function hasUsableOpenAIKey(){
   const direct=String(Netlify.env.get("OPENAI_API_KEY")||"").trim();
@@ -43,13 +43,13 @@ async function resolveDocuments(store:any,jobId:string,inlineDocs:any[],refs:str
   return documents;
 }
 
-async function analysisCacheKey(listingUrl:string,address:string,extra:string,documents:any[]){
+async function analysisCacheKey(listingUrl:string,address:string,extra:string,documents:any[],documentIssues:any[]=[]){
   const fingerprints:string[]=[];
   for(const d of documents){
     const existing=String(d?.contentHash||"").trim();
     fingerprints.push(existing||await hash(`${String(d?.name||"")}\n${String(d?.text||"")}`));
   }
-  return `analysis-cache-${await hash(JSON.stringify({v:CACHE_VERSION,listingUrl,address,extra,documents:fingerprints}))}`;
+  return `analysis-cache-${await hash(JSON.stringify({v:CACHE_VERSION,listingUrl,address,extra,documents:fingerprints,documentIssues:documentIssues.map((x:any)=>[String(x?.name||""),String(x?.reason||"")])}))}`;
 }
 
 export default async(req:Request,_context:Context)=>{
@@ -63,6 +63,7 @@ export default async(req:Request,_context:Context)=>{
     const inlineDocuments=Array.isArray(body?.documents)?body.documents.slice(0,30):[];
     documentRefs=Array.isArray(body?.documentRefs)?body.documentRefs.slice(0,30).map((x:any)=>String(x||"")).filter((x:string)=>x.startsWith(`doc-${jobId}-`)||x.startsWith(`docbatch-${jobId}-`)):[];
     const extra=String(body?.extra||"").slice(0,7000);
+    const documentIssues=Array.isArray(body?.documentIssues)?body.documentIssues.slice(0,30).map((x:any)=>({name:String(x?.name||"document").slice(0,240),reason:String(x?.reason||"Non exploitable").slice(0,300)})):[];
     if(!listingUrl&&!address&&inlineDocuments.length===0&&documentRefs.length===0)return json({error:"Ajoutez au moins une annonce, une adresse ou un document."},400);
     if(!hasUsableOpenAIKey()){
       if(documentRefs.length)await Promise.allSettled(documentRefs.map(ref=>store.delete(ref)));
@@ -70,7 +71,7 @@ export default async(req:Request,_context:Context)=>{
     }
 
     const documents=await resolveDocuments(store,jobId,inlineDocuments,documentRefs);
-    const cacheKey=await analysisCacheKey(listingUrl,address,extra,documents);
+    const cacheKey=await analysisCacheKey(listingUrl,address,extra,documents,documentIssues);
     const cached:any=await store.get(cacheKey,{type:"json"});
     if(cached?.result&&!isExpired(cached)){
       const result=structuredClone(cached.result);
@@ -80,7 +81,7 @@ export default async(req:Request,_context:Context)=>{
     }
 
     const rate=await checkRateLimit(store,req,cacheKey);if(!rate.ok){await Promise.allSettled(documentRefs.map(ref=>store.delete(ref)));return json({error:rate.message},429)}
-    const expiry=expiresIn(1000*60*60*3),input={listingUrl,address,documents,extra,cacheKey,expires_at:expiry};
+    const expiry=expiresIn(1000*60*60*3),input={listingUrl,address,documents,documentIssues,extra,cacheKey,expires_at:expiry};
     await store.setJSON(`input-${jobId}`,input);
     await Promise.allSettled(documentRefs.map(ref=>store.delete(ref)));
 
