@@ -20,8 +20,8 @@ jobs:
           node-version: 22
       - name: Validate official DVF fallback on real address
         run: |
-          cat > /tmp/dvf-check.mjs <<'JS'
-          import {parseStaticDvfCsv,selectOfficialComparables,applyOfficialMarketData} from process.cwd() + '/netlify/lib/reliability-core.mjs';
+          cat > ./dvf-check.mjs <<'JS'
+          import {parseStaticDvfCsv,selectOfficialComparables,applyOfficialMarketData} from './netlify/lib/reliability-core.mjs';
           const address='26 Chemin de Borderouge 31200 Toulouse';
           const geoUrl=new URL('https://data.geopf.fr/geocodage/search/');
           geoUrl.searchParams.set('q',address);geoUrl.searchParams.set('limit','1');
@@ -51,4 +51,4 @@ jobs:
             estimate_low:market.market.estimate_low,estimate_high:market.market.estimate_high
           },null,2));
           JS
-          node /tmp/dvf-check.mjs
+          node ./dvf-check.mjs
