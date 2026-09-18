@@ -1,0 +1,139 @@
+name: ReVisite real-shape browser E2E
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/revisite-real-shape-e2e.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  stress:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install browser test dependencies
+        run: |
+          npm install --no-save playwright@1.55.0
+          npx playwright install --with-deps chromium
+          python3 -m pip install reportlab pillow
+      - name: Create dossier matching real page structure
+        run: |
+          python3 - <<'PY'
+          from reportlab.pdfgen import canvas
+          from reportlab.lib.pagesizes import A4
+          from reportlab.lib.utils import ImageReader
+          from PIL import Image, ImageDraw, ImageFont
+          import os
+          os.makedirs('/tmp/revisite-shape',exist_ok=True)
+
+          def native_pdf(name,pages,first_lines,repeat):
+              p='/tmp/revisite-shape/'+name
+              c=canvas.Canvas(p,pagesize=A4)
+              for page in range(1,pages+1):
+                  y=800
+                  lines=first_lines if page==1 else [repeat, f'Page {page}']
+                  for line in lines:
+                      c.drawString(55,y,line); y-=22
+                  for i in range(18):
+                      c.drawString(55,y,(repeat+' informations documentaires controlees ')[:105]); y-=18
+                  c.showPage()
+              c.save()
+
+          def scanned_pdf(name,pages,label):
+              p='/tmp/revisite-shape/'+name
+              c=canvas.Canvas(p,pagesize=A4)
+              for page in range(1,pages+1):
+                  img=Image.new('RGB',(1240,1754),'white')
+                  d=ImageDraw.Draw(img)
+                  font=ImageFont.load_default()
+                  lines=[
+                    label,
+                    f'PROCES VERBAL ASSEMBLEE GENERALE PAGE {page}',
+                    'RESOLUTION - BUDGET - TRAVAUX - VOTE - COPROPRIETE',
+                    'Les decisions votees doivent etre distinguees des simples discussions.',
+                    'Montants et tantiemes presentes dans le proces verbal.'
+                  ]
+                  y=160
+                  for line in lines:
+                      d.text((120,y),line,fill='black',font=font); y+=95
+                  for i in range(10):
+                      d.text((120,y),f'Resolution {i+1} examinee en assemblee generale.',fill='black',font=font); y+=70
+                  img_path=f'/tmp/revisite-shape/_page_{os.getpid()}.png'
+                  img.save(img_path)
+                  c.drawImage(ImageReader(img_path),0,0,width=A4[0],height=A4[1])
+                  c.showPage()
+                  os.remove(img_path)
+              c.save()
+
+          native_pdf('DIA-BZR09-2603-048_Dossier_Mr_GILLES_ANDRE.pdf',86,[
+              'Diagnostic de performance energetique DPE C.',
+              'Surface Carrez : 83,44 m2.',
+              'Appartement T4.',
+              'Installation electrique : aucune anomalie majeure relevee.'
+          ],'Diagnostics immobiliers DPE electricite amiante risques surface Carrez.')
+          native_pdf('DECOMPTE.pdf',3,[
+              'Decompte de charges du lot.',
+              'Total annuel : 1976,66 euros.',
+              'Charges courantes de copropriete.'
+          ],'Decompte charges provisions copropriete.')
+          native_pdf('1ERTRIM26.pdf',2,[
+              'Appel de fonds premier trimestre 2026.',
+              'Provision courante et fonds travaux.'
+          ],'Appel de fonds trimestriel copropriete.')
+          native_pdf('00000000 - Carnet Entretien.pdf',18,[
+              'Carnet entretien copropriete.',
+              'Contrats entretien maintenance immeuble.'
+          ],'Carnet entretien maintenance ascenseur toiture VMC.')
+          scanned_pdf('6354._PV_AG_DU_03.04.2024.pdf',14,'ASSEMBLEE GENERALE 03 AVRIL 2024')
+          scanned_pdf('6354_PV_AG_16062025.pdf',12,'ASSEMBLEE GENERALE 16 JUIN 2025')
+          scanned_pdf('6354_PV_AGS_04122025.pdf',13,'ASSEMBLEE GENERALE 04 DECEMBRE 2025')
+          scanned_pdf('6354_PV_AG_190326.pdf',17,'ASSEMBLEE GENERALE 19 MARS 2026')
+          PY
+      - name: Run production real-shape flow
+        run: |
+          cat > ./real-shape-e2e.mjs <<'JS'
+          import { chromium } from 'playwright';
+          const browser=await chromium.launch({headless:true});
+          const page=await browser.newPage();
+          page.setDefaultTimeout(600000);
+          page.on('console',m=>console.log('BROWSER',m.type(),m.text()));
+          page.on('response',async res=>{
+            if(res.url().includes('/api/analyze-status')){
+              try{console.log('STATUS',res.status(),(await res.text()).slice(0,3000))}catch{}
+            }
+          });
+          await page.goto('https://revisite-demo.netlify.app/?stress=v4',{waitUntil:'networkidle'});
+          await page.locator('#address').fill('26 chemin de Borderouge 31200 Toulouse');
+          await page.locator('#extra').fill('Test automatique dossier structure reelle v4.');
+          const files=[
+            '/tmp/revisite-shape/00000000 - Carnet Entretien.pdf',
+            '/tmp/revisite-shape/1ERTRIM26.pdf',
+            '/tmp/revisite-shape/6354._PV_AG_DU_03.04.2024.pdf',
+            '/tmp/revisite-shape/6354_PV_AG_190326.pdf',
+            '/tmp/revisite-shape/6354_PV_AG_16062025.pdf',
+            '/tmp/revisite-shape/6354_PV_AGS_04122025.pdf',
+            '/tmp/revisite-shape/DECOMPTE.pdf',
+            '/tmp/revisite-shape/DIA-BZR09-2603-048_Dossier_Mr_GILLES_ANDRE.pdf'
+          ];
+          await page.locator('#files').setInputFiles(files);
+          await page.waitForFunction(()=>document.querySelectorAll('#filesList .file').length===8);
+          await page.locator('#analyze').click();
+          await page.waitForFunction(()=>{
+            const report=document.querySelector('#report');
+            const status=document.querySelector('#status')?.textContent||'';
+            if(/n'a pas pu|erreur|indisponibilit/i.test(status)) throw new Error(status);
+            return report&&!report.classList.contains('hidden');
+          },null,{timeout:600000});
+          const text=(await page.locator('#report').innerText()).toLowerCase();
+          console.log('REPORT',text.slice(0,12000));
+          if(!text.includes('83,44')&&!text.includes('83.44')) throw new Error('Surface 83,44 absente du rapport');
+          if(!text.includes('dpe')||!text.includes('c')) throw new Error('DPE C absent du rapport');
+          if(!text.includes('1 977')&&!text.includes('1976')&&!text.includes('1 976')) throw new Error('Charges de controle absentes du rapport');
+          console.log('REAL_SHAPE_E2E_OK');
+          await browser.close();
+          JS
+          node ./real-shape-e2e.mjs
