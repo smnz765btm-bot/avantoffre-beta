@@ -57,15 +57,16 @@ function installUploadMonitor(){
           else readState.set(meta.index,{name:meta.name,status:'failed',...reasonFor(res.status,item?.error||data?.error,actualChars),chars:actualChars});
           setRowStatus(meta.index,readState.get(meta.index));
         }
-        renderReadWarnings();
+        try{renderReadWarnings()}catch{}
       }
       return res;
     }catch(err){
       for(const meta of metas){readState.set(meta.index,{name:meta.name,status:'failed',...reasonFor(500,err?.message,0)});setRowStatus(meta.index,readState.get(meta.index))}
-      renderReadWarnings();throw err;
+      try{renderReadWarnings()}catch{};throw err;
     }
   }
 }
+function failures(includeMissing=false){const names=fileNamesFromRows(),out=[];names.forEach((name,i)=>{const s=readState.get(i);if(s?.status==='failed')out.push({...s,index:i});else if(includeMissing&&!s)out.push({name,index:i,status:'failed',reason:'Fichier non traité',solution:'Réimportez le document puis relancez l’analyse.',kind:'bad'})});return out}
 function warningHtml(list,forReport=false){if(!list.length)return'';const partialOnly=list.every(x=>x.kind==='warn');const critical=list.some(x=>isPv(x.name));const title=partialOnly?'⚠ Lecture partielle de certains documents':critical?'⚠ PV d’AG non exploitable : analyse copropriété incomplète':'⚠ Certains documents n’ont pas pu être exploités';return `<div class="ao-readalert ${critical?'critical':''} ${forReport?'report':''}"><strong>${title}</strong><ul>${list.map(x=>`<li><span class="ao-file">${esc(x.name)}</span> — ${esc(x.reason)} <span class="ao-solution">${esc(x.solution)}</span></li>`).join('')}</ul>${critical?'<span class="ao-solution"><b>Important :</b> seules les informations effectivement lisibles sont prises en compte dans les conclusions copropriété.</span>':''}</div>`}
 function renderReadWarnings(final=false){
   const list=failures(final),html=warningHtml(list,false);
