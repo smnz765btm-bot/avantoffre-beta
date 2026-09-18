@@ -67,6 +67,15 @@ async function fetchJson(url:string,timeoutMs=9000){
     return await rsp.json();
   }finally{clearTimeout(timer)}
 }
+async function fetchText(url:string,timeoutMs=15000){
+  const controller=new AbortController();
+  const timer=setTimeout(()=>controller.abort(),timeoutMs);
+  try{
+    const rsp=await fetch(url,{headers:{Accept:"text/csv,text/plain;q=0.9,*/*;q=0.2","User-Agent":"ReVisite/0.4"},signal:controller.signal});
+    if(!rsp.ok)throw new Error(`HTTP ${rsp.status}`);
+    return await rsp.text();
+  }finally{clearTimeout(timer)}
+}
 
 const slimDvfRow=(x:any)=>({
   valeurfonc:x?.valeurfonc??null,sbati:x?.sbati??null,libtypbien:x?.libtypbien??null,codtypbien:x?.codtypbien??null,datemut:x?.datemut??null
