@@ -1,4 +1,5 @@
 name: ReVisite browser one-shot E2E
+# production verification after stability hardening
 
 on:
   push:
