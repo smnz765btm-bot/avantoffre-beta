@@ -199,6 +199,7 @@ PRIX / MARCHÉ
 - Les lignes DVF+ fournies dans le message utilisateur proviennent du Cerema. Utilise-les comme source prioritaire pour les ventes enregistrées.
 - N'invente AUCUNE vente DVF supplémentaire. Si les ventes fournies sont insuffisantes, indique une confiance faible ou moyenne.
 - L'URL d'annonce peut être recherchée uniquement pour compléter les caractéristiques ou le prix demandé. Une annonce n'est jamais une vente réalisée.
+- Ne propose aucun montant d'offre automatique. La fourchette de valeur est recalculée après ta réponse à partir des seuls comparables DVF vérifiés.
 
 COPROPRIÉTÉ
 - Sépare strictement travaux votés, discutés, rejetés/reportés et recommandations PPPT/PPT.
@@ -288,6 +289,25 @@ Retourne uniquement un objet JSON valide correspondant aux rubriques demandées.
       analysis.market.comparables=[];analysis.market.confidence="faible";
       analysis.market.positioning="Source DVF+ officielle momentanément indisponible : aucun positionnement prix n'est affiché.";
       analysis.market.analysis="ReVisite préfère ne produire aucune estimation plutôt que d'utiliser des comparables non vérifiés.";
+    }
+    analysis.negotiation=analysis.negotiation||{};
+    analysis.negotiation.offer_comment="";
+    const verifiedLow=num(analysis?.market?.estimate_low),verifiedHigh=num(analysis?.market?.estimate_high),listed=num(analysis?.property?.asking_price);
+    if(verifiedLow!==null&&verifiedHigh!==null){
+      analysis.negotiation.recommended_strategy=
+        listed!==null&&listed>verifiedHigh
+          ?"Le prix affiché est au-dessus de la fourchette DVF indicative. Fonder la négociation sur les écarts documentés du bien, de la copropriété et des travaux."
+          :listed!==null&&listed<verifiedLow
+            ?"Le prix affiché est sous la fourchette DVF indicative. Vérifier les pièces techniques et de copropriété avant de fixer une offre."
+            :"Le prix affiché se situe dans la fourchette DVF indicative. Valider les pièces techniques et de copropriété avant de fixer une offre.";
+    }else{
+      analysis.negotiation.recommended_strategy="Ne pas fixer de montant d'offre automatique sans références de marché vérifiées.";
+    }
+    if(Array.isArray(analysis.evidence)&&dvf.source){
+      analysis.evidence=analysis.evidence.map((e:any)=>{
+        const combined=String(e?.claim||"")+" "+String(e?.source||"");
+        return /\bDVF\b/i.test(combined)?{...e,source:String(dvf.source)}:e;
+      });
     }
     const p=analysis.property||{};
     if(p.asking_price&&p.surface_m2&&!p.price_per_m2)p.price_per_m2=Math.round(Number(p.asking_price)/Number(p.surface_m2));
