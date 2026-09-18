@@ -33,7 +33,16 @@ const score=v=>v===null||v===undefined||v===''||!Number.isFinite(Number(v))?null
 const val=v=>v===null||v===undefined||v===''?'N/C':esc(v);
 function render(d){
   const r=d.result||{},a=r.analysis||{},s=r.scores||{},meta=r.meta||{},p=a.property||{},m=a.market||{},c=a.copro_metrics||{},co=a.copro||{},w=a.works||{},bb=a.buyer_blocks||{},dw=bb.diagnostic_works||{},fc=bb.future_copro_costs||{},rb=bb.real_acquisition_budget||{},bc=bb.before_offer_checks||{},ex=a.executive_summary||{},n=a.negotiation||{},v=a.verdict||{},docs=a.documents||{};
-  const withheld=Boolean(meta.score_withheld)||score(s.property)===null||score(s.copro)===null||score(s.market)===null;
+  const propertyGate=s.evidence_gate?.property;
+  const coproGate=s.evidence_gate?.copro;
+  const marketGate=s.evidence_gate?.market;
+  const legacyPropertyUnsupported=propertyGate===undefined&&!p.dpe;
+  const financeCore=[c.annual_budget,c.collective_arrears,c.supplier_debt,c.cash,c.works_fund].filter(x=>x!==null&&x!==undefined&&x!=='').length;
+  const legacyCoproUnsupported=coproGate===undefined&&financeCore<2;
+  const propertyScore=propertyGate===false||legacyPropertyUnsupported?null:score(s.property);
+  const coproScore=coproGate===false||legacyCoproUnsupported?null:score(s.copro);
+  const marketScore=marketGate===false?null:score(s.market);
+  const withheld=Boolean(meta.score_withheld)||propertyScore===null||coproScore===null||marketScore===null;
   const overall=withheld?null:score(s.overall),documentation=score(s.documentation),confidence=score(s.confidence);
   const rejected=arr(docs.rejected),quality=arr(meta.document_quality);
   const partialCount=quality.filter(x=>x?.quality==='partial').length;
@@ -49,9 +58,9 @@ function render(d){
       <div class="${scopeClass}"><b>Périmètre documentaire</b><br>${esc(scopeText)} Une information absente n’est jamais assimilée à un défaut.</div>
       <div class="grid" style="margin-top:14px">
         ${k('Synthèse globale',overall===null?'N/C':overall+'/100')}
-        ${k('Bien',score(s.property)===null?'N/C':score(s.property)+'/100')}
-        ${k('Copropriété',score(s.copro)===null?'N/C':score(s.copro)+'/100')}
-        ${k('Marché',score(s.market)===null?'N/C':score(s.market)+'/100')}
+        ${k('Bien',propertyScore===null?'N/C':propertyScore+'/100')}
+        ${k('Copropriété',coproScore===null?'N/C':coproScore+'/100')}
+        ${k('Marché',marketScore===null?'N/C':marketScore+'/100')}
       </div>
       <div class="statusRow">
         ${documentation!==null?`<span class="statusPill">Couverture documentaire ${documentation}/100</span>`:''}
