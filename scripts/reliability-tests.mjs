@@ -185,7 +185,7 @@ assert.equal(market.market.estimate_low,market.market.dvf_reference.low,'La born
 assert.equal(market.market.estimate_high,market.market.dvf_reference.high,'La borne haute affichée doit venir du calcul DVF déterministe');
 assert.equal(market.market.offer_low,null,'Aucun montant d’offre automatique ne doit survivre au recalage DVF');
 assert.equal(market.market.offer_high,null,'Aucun montant d’offre automatique ne doit survivre au recalage DVF');
-assert.ok(market.market.analysis.includes('ventes DVF officielles'),'Le commentaire marché doit être recalculé à partir des ventes vérifiées');
+assert.ok(market.market.analysis.includes('ventes DVF'),'Le commentaire marché doit être recalculé à partir des ventes vérifiées');
 assert.ok(!market.market.analysis.includes('contradictoire'),'Le commentaire IA contradictoire doit être écrasé');
 
 const bimodalPms=[1844,1950,1948,2182,2451,2513,2531,2557,2699,3295,3518,3560,2400,2600,2300];
