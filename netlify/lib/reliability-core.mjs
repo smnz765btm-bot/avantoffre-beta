@@ -1,5 +1,5 @@
 export const clamp=(n,min=0,max=100)=>Math.max(min,Math.min(max,Number(n)||0));
-export const num=v=>Number.isFinite(Number(v))?Number(v):null;
+export const num=v=>v===null||v===undefined||(typeof v==='string'&&v.trim()==='')?null:(Number.isFinite(Number(v))?Number(v):null);
 const arr=v=>Array.isArray(v)?v:[];
 const obj=v=>v&&typeof v==='object'&&!Array.isArray(v)?v:{};
 const text=v=>typeof v==='string'?v:'';
