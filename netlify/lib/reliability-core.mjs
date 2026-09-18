@@ -70,11 +70,14 @@ function balancedExcerpt(raw,maxChars){
   return raw.slice(0,head)+'\n[…contenu intermédiaire condensé…]\n'+raw.slice(midStart,midStart+mid)+'\n[…fin condensée…]\n'+raw.slice(-Math.max(0,tail));
 }
 
-export function prepareDocs(docs=[]){
-  const MAX_TOTAL=900000,MAX_DOC=80000;
+export function prepareDocs(docs=[],options={}){
+  // Keep the model input comfortably bounded even on 20–30 document dossiers.
+  // 360k characters is intentionally conservative and a compact fallback can go lower.
+  const MAX_TOTAL=Math.max(90000,Number(options?.maxTotal)||360000);
+  const MAX_DOC=Math.max(12000,Number(options?.maxDoc)||50000);
   const list=Array.isArray(docs)?docs.slice(0,30):[];
   if(!list.length)return[];
-  const fairCap=Math.max(12000,Math.floor(MAX_TOTAL/list.length));
+  const fairCap=Math.max(9000,Math.floor(MAX_TOTAL/list.length));
   const cap=Math.min(MAX_DOC,fairCap);
   return list.map(d=>{
     const raw=text(d?.text);
