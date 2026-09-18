@@ -1,0 +1,54 @@
+name: ReVisite DVF live check once
+
+on:
+  push:
+    branches: [reliability-report-v1]
+    paths:
+      - '.github/workflows/revisite-dvf-live-check-once.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Validate official DVF fallback on real address
+        run: |
+          cat > /tmp/dvf-check.mjs <<'JS'
+          import {parseStaticDvfCsv,selectOfficialComparables,applyOfficialMarketData} from process.cwd() + '/netlify/lib/reliability-core.mjs';
+          const address='26 Chemin de Borderouge 31200 Toulouse';
+          const geoUrl=new URL('https://data.geopf.fr/geocodage/search/');
+          geoUrl.searchParams.set('q',address);geoUrl.searchParams.set('limit','1');
+          const g=await (await fetch(geoUrl)).json();
+          const f=g.features?.[0];
+          if(!f) throw new Error('Geocoding failed');
+          const [lon,lat]=f.geometry.coordinates;
+          const citycode=f.properties.citycode,depcode=f.properties.depcode;
+          if(citycode!=='31555'||depcode!=='31') throw new Error('Unexpected commune code '+citycode+'/'+depcode);
+          let rows=[];
+          for(const y of [2025,2024,2023]){
+            const u=`https://files.data.gouv.fr/geo-dvf/latest/csv/${y}/communes/${depcode}/${citycode}.csv`;
+            const r=await fetch(u);
+            if(!r.ok) continue;
+            rows.push(...parseStaticDvfCsv(await r.text(),{lat,lon,maxDistanceM:1200,source:'data.gouv.fr — DVF Etalab'}));
+            if(rows.length>=30) break;
+          }
+          const comps=selectOfficialComparables(rows,{title:'Appartement T4',surface_m2:83.44,floor:'2e étage'});
+          if(comps.length<3) throw new Error('Not enough verified comparables: '+comps.length);
+          if(!comps.every(x=>x.source.includes('data.gouv.fr'))) throw new Error('Source mismatch');
+          if(!comps.every(x=>x.surface>=58&&x.surface<=109)) throw new Error('Surface filter mismatch');
+          const market=applyOfficialMarketData({property:{title:'Appartement T4',surface_m2:83.44,floor:'2e étage'},market:{}},rows);
+          if(!(market.market.estimate_low>0&&market.market.estimate_high>=market.market.estimate_low)) throw new Error('No verified market range');
+          console.log(JSON.stringify({
+            address,citycode,rows:rows.length,
+            comparables:comps.map(x=>({date:x.date,price:x.price,surface:x.surface,price_m2:x.price_m2,distance_m:x.distance_m,source:x.source})),
+            estimate_low:market.market.estimate_low,estimate_high:market.market.estimate_high
+          },null,2));
+          JS
+          node /tmp/dvf-check.mjs
