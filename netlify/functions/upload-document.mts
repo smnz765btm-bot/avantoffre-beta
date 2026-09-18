@@ -14,33 +14,59 @@ function hasUsableOpenAIKey(){
 async function allowUpload(store:any,req:Request){
   const ip=(req.headers.get("x-nf-client-connection-ip")||req.headers.get("x-forwarded-for")?.split(",")[0]||"unknown").trim();
   const day=new Date().toISOString().slice(0,10),key=`upload-ip-${day}-${await hash(ip)}`,prev:any=await store.get(key,{type:"json"});
-  const limit=Math.max(30,Number(Netlify.env.get("REVISITE_UPLOAD_DAILY_LIMIT"))||120),count=Number(prev?.count)||0;
+  const limit=Math.max(10,Number(Netlify.env.get("REVISITE_UPLOAD_DAILY_LIMIT"))||40),count=Number(prev?.count)||0;
   if(count>=limit)return false;
-  await store.setJSON(key,{count:count+1,expires_at:expiresIn(1000*60*60*48)});return true;
+  await store.setJSON(key,{count:count+1,expires_at:expiresIn(1000*60*60*48)});
+  return true;
+}
+
+function normalizeDocument(raw:any){
+  const index=Number(raw?.index),name=String(raw?.name||"document").slice(0,240),text=String(raw?.text||"");
+  const pages=Number.isFinite(Number(raw?.pages))?Number(raw.pages):null;
+  const quality=["ok","partial","failed"].includes(String(raw?.quality))?String(raw.quality):text.trim().length>=80?"ok":"failed";
+  const ocrPages=Math.max(0,Number(raw?.ocrPages)||0),weakPages=Math.max(0,Number(raw?.weakPages)||0);
+  if(!Number.isInteger(index)||index<0||index>29)throw new Error("Référence de document invalide.");
+  if(text.length>500000)throw new Error(`${name} est trop volumineux après extraction.`);
+  if(quality==="failed"||text.trim().length<80)throw new Error(`${name} n'est pas assez exploitable après OCR.`);
+  return{index,name,text,pages,quality,ocrPages,weakPages};
 }
 
 export default async(req:Request,_context:Context)=>{
   if(req.method!=="POST")return json({error:"Méthode non autorisée."},405);
-  if(!hasUsableOpenAIKey())return json({error:"Le moteur ReVisite n'est pas correctement configuré : la clé API OpenAI doit être remplacée."},503);
+  if(!hasUsableOpenAIKey())return json({error:"Le moteur ReVisite n'est pas correctement configuré."},503);
   const store=jobStore();
   try{
     if(!await allowUpload(store,req))return json({error:"Limite d'envoi atteinte pour aujourd'hui sur cette bêta."},429);
     const body:any=await req.json();
     const jobId=String(body?.jobId||"").replace(/[^a-zA-Z0-9_-]/g,"").slice(0,80);
-    const index=Number(body?.index),name=String(body?.name||"document").slice(0,240),text=String(body?.text||"");
-    const pages=Number.isFinite(Number(body?.pages))?Number(body.pages):null;
-    const quality=["ok","partial","failed"].includes(String(body?.quality))?String(body.quality):text.trim().length>=80?"ok":"failed";
-    const ocrPages=Math.max(0,Number(body?.ocrPages)||0),weakPages=Math.max(0,Number(body?.weakPages)||0);
-    if(!jobId||!Number.isInteger(index)||index<0||index>29)return json({error:"Référence de document invalide."},400);
-    if(text.length>500000)return json({error:"Document trop volumineux après extraction."},413);
-    if(quality==="failed"||text.trim().length<80)return json({error:"Lecture insuffisante après seconde lecture OCR. Le document n'est pas assez exploitable pour une analyse fiable.",quality,ocrPages,weakPages,chars:text.length},422);
-    const contentHash=await hash(`${name}\n${text}`),key=`doc-${jobId}-${index}`;
-    await store.setJSON(key,{name,text,pages,chars:text.length,quality,ocrPages,weakPages,contentHash,created_at:new Date().toISOString(),expires_at:expiresIn(1000*60*60*3)});
-    if(quality==="partial")return json({ref:key,index,name,chars:79,actualChars:text.length,quality,ocrPages,weakPages,contentHash,error:`Lecture partielle après OCR : ${weakPages} page(s) restent difficiles à exploiter.`});
-    return json({ref:key,index,name,chars:text.length,actualChars:text.length,quality,ocrPages,weakPages,contentHash});
+    if(!jobId)return json({error:"Référence d'analyse invalide."},400);
+
+    const incoming=Array.isArray(body?.documents)?body.documents:[body];
+    if(!incoming.length||incoming.length>12)return json({error:"Lot de documents invalide."},400);
+    const docs=incoming.map(normalizeDocument);
+    const totalChars=docs.reduce((s:number,d:any)=>s+d.text.length,0);
+    if(totalChars>900000)return json({error:"Lot de documents trop volumineux. ReVisite le renverra en plusieurs lots."},413);
+
+    const prepared=[];
+    for(const d of docs){
+      const contentHash=await hash(`${d.name}\n${d.text}`);
+      prepared.push({...d,contentHash,created_at:new Date().toISOString()});
+    }
+    const batchIndex=Math.max(0,Number(body?.batchIndex)||0);
+    const key=`docbatch-${jobId}-${batchIndex}`;
+    await store.setJSON(key,{documents:prepared,expires_at:expiresIn(1000*60*60*3)});
+
+    return json({
+      ref:key,
+      count:prepared.length,
+      documents:prepared.map(d=>({
+        index:d.index,name:d.name,chars:d.text.length,actualChars:d.text.length,quality:d.quality,
+        ocrPages:d.ocrPages,weakPages:d.weakPages,contentHash:d.contentHash
+      }))
+    });
   }catch(err:any){
     console.error("ReVisite upload document error",err);
-    return json({error:err?.message||"Impossible d'envoyer le document."},500);
+    return json({error:err?.message||"Impossible d'envoyer les documents."},500);
   }
 };
 
