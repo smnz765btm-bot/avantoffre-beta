@@ -115,21 +115,6 @@ function dvfPromptRows(rows:any[]){
   }).join("\n");
 }
 
-async function recordUsage(store:any,usage:any){
-  if(!usage)return;
-  try{
-    const day=new Date().toISOString().slice(0,10),key=`usage-${day}`;
-    const previous:any=await store.get(key,{type:"json"})||{};
-    await store.setJSON(key,{
-      date:day,calls:(Number(previous.calls)||0)+1,
-      input_tokens:(Number(previous.input_tokens)||0)+(Number(usage.input_tokens)||0),
-      output_tokens:(Number(previous.output_tokens)||0)+(Number(usage.output_tokens)||0),
-      total_tokens:(Number(previous.total_tokens)||0)+(Number(usage.total_tokens)||0),
-      expires_at:expiresIn(1000*60*60*24*120)
-    });
-  }catch{}
-}
-
 function getOpenAIKey(){
   const direct=Netlify.env.get("OPENAI_API_KEY");
   if(direct)return direct;
@@ -253,8 +238,6 @@ Retourne uniquement un objet JSON valide correspondant aux rubriques demandées.
     if(degradedMode){
       scores.property=null;scores.copro=null;scores.market=null;scores.overall=null;scores.confidence=Math.min(Number(scores.confidence)||0,35);
     }
-    await recordUsage(store,totalUsage);
-
     const result={analysis,scores,meta:{
       model,document_count:docs.length,beta:true,generated_at:new Date().toISOString(),
       input_chars:preparedChars,dvf_status:dvf.status,dvf_source:dvf.source||null,dvf_candidate_count:Array.isArray(dvf.candidates)?dvf.candidates.length:0,
