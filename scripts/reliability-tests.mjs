@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import {documentCoverage,prepareDocs,normalizeAnalysis,selectOfficialComparables,applyOfficialMarketData,deterministicScores,num} from '../netlify/lib/reliability-core.mjs';
+import {partitionUploadDocuments} from '../netlify/lib/upload-core.mjs';
 
 assert.equal(num(null),null,'Une valeur nulle doit rester inconnue et ne jamais devenir zéro');
 assert.equal(num(undefined),null,'Une valeur absente doit rester inconnue');
@@ -61,6 +62,16 @@ assert.ok(comps.every(c=>c.type==='DVF'&&c.source.includes('Cerema')),'Les DVF a
 const market=applyOfficialMarketData(analysis,candidates);
 assert.equal(market.market.comparables.length,3,'Les comparables IA non vérifiés doivent être remplacés par les DVF officielles');
 assert.ok(market.market.estimate_low&&market.market.estimate_high,'Une fourchette DVF doit pouvoir être calculée');
+
+const mixedUpload=partitionUploadDocuments([
+ {index:0,name:'diagnostics.pdf',text:'Diagnostic exploitable. '.repeat(20),quality:'ok',pages:3},
+ {index:1,name:'plan.pdf',text:'x',quality:'failed',pages:1}
+]);
+assert.equal(mixedUpload.accepted.length,1,'Un PDF illisible ne doit pas bloquer les autres documents du lot');
+assert.equal(mixedUpload.rejected.length,1,'Le PDF illisible doit être signalé séparément');
+assert.equal(mixedUpload.accepted[0].name,'diagnostics.pdf');
+assert.equal(mixedUpload.rejected[0].name,'plan.pdf');
+assert.equal(mixedUpload.rejected[0].accepted,false);
 
 console.log('ReVisite reliability tests: OK');
 
