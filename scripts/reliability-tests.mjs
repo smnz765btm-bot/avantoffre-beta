@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import {documentCoverage,prepareDocs,normalizeAnalysis,extractDeterministicFacts,applyDeterministicFacts,selectOfficialComparables,applyOfficialMarketData,deterministicScores,hardenScores,num} from '../netlify/lib/reliability-core.mjs';
+import {documentCoverage,prepareDocs,normalizeAnalysis,extractDeterministicFacts,applyDeterministicFacts,parseStaticDvfCsv,selectOfficialComparables,applyOfficialMarketData,deterministicScores,hardenScores,num} from '../netlify/lib/reliability-core.mjs';
 import {partitionUploadDocuments} from '../netlify/lib/upload-core.mjs';
 
 assert.equal(num(null),null,'Une valeur nulle doit rester inconnue et ne jamais devenir zéro');
@@ -123,6 +123,17 @@ assert.equal(incompleteRealLike.overall,null);
 
 const analysis=normalizeAnalysis({property:{surface_m2:83.44,title:'Appartement T4'},market:{comparables:[{type:'DVF',price:1}]},risk_flags:{electrical_anomalies:false},evidence:[{claim:'x',status:'FACT',source:''}]});
 assert.equal(analysis.evidence[0].status,'UNKNOWN','Un fait sans source ne doit pas rester FACT');
+const staticCsv=`id_mutation,date_mutation,numero_disposition,nature_mutation,valeur_fonciere,adresse_numero,adresse_suffixe,adresse_nom_voie,adresse_code_voie,code_postal,code_commune,nom_commune,code_departement,ancien_code_commune,ancien_nom_commune,id_parcelle,ancien_id_parcelle,numero_volume,lot1_numero,lot1_surface_carrez,lot2_numero,lot2_surface_carrez,lot3_numero,lot3_surface_carrez,lot4_numero,lot4_surface_carrez,lot5_numero,lot5_surface_carrez,nombre_lots,code_type_local,type_local,surface_reelle_bati,nombre_pieces_principales,code_nature_culture,nature_culture,code_nature_culture_speciale,nature_culture_speciale,surface_terrain,longitude,latitude
+2025-1,2025-06-01,000001,Vente,205000,20,,CHEMIN DE TEST,,31200,31555,Toulouse,31,,,,,,"10",83.44,,,,,,,,,1,2,Appartement,83,4,,,,,,1.456500,43.642700
+2025-1,2025-06-01,000001,Vente,205000,20,,CHEMIN DE TEST,,31200,31555,Toulouse,31,,,,,,"11",,,,,,,,,,1,3,Dépendance,,0,,,,,,1.456500,43.642700
+2025-2,2025-05-01,000001,Vente,310000,4,,RUE LOIN,,31200,31555,Toulouse,31,,,,,,,,,,,,,,,,,1,2,Appartement,85,4,,,,,,1.500000,43.700000
+`;
+const staticRows=parseStaticDvfCsv(staticCsv,{lat:43.642529,lon:1.456254,maxDistanceM:1200});
+assert.equal(staticRows.length,1,'Le fallback DVF doit garder uniquement les logements proches et exclure les dépendances');
+assert.equal(staticRows[0].codtypbien,'121');
+assert.ok(staticRows[0].distance_m<100,'La distance DVF doit être calculée');
+assert.ok(String(staticRows[0].source).includes('data.gouv.fr'),'La source du fallback doit rester explicite');
+
 const candidates=[
  {valeurfonc:'205000',sbati:'82',libtypbien:'UN APPARTEMENT',codtypbien:'121',datemut:'2026-01-10'},
  {valeurfonc:'214000',sbati:'85',libtypbien:'UN APPARTEMENT',codtypbien:'121',datemut:'2025-11-03'},
