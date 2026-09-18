@@ -20,6 +20,22 @@ const scored=deterministicScores({risk_flags:{},copro_metrics:{},property:{askin
 assert.ok(scored.overall!==null,'Le score global est autorisé lorsque la couverture est suffisante');
 assert.ok(scored.confidence>=scored.documentation*.7,'La confiance doit suivre principalement la qualité documentaire');
 
+
+const partialAgDocs=[
+ {name:'PV_AG_2026.pdf',quality:'partial',pages:20,weakPages:12,text:('PROCÈS-VERBAL ASSEMBLÉE GÉNÉRALE. '+'résolution '.repeat(1000))},
+ {name:'DECOMPTE.pdf',quality:'ok',pages:3,weakPages:0,text:('DÉCOMPTE DE CHARGES. Total des charges du lot. '+'charges '.repeat(700))},
+ {name:'Carnet Entretien.pdf',quality:'ok',pages:8,weakPages:0,text:('Carnet d’entretien maintenance ascenseur toiture VMC. '+'entretien '.repeat(700))}
+];
+const partialScores=deterministicScores({
+ risk_flags:{},
+ property:{surface_m2:83.44,rooms:4,dpe:'C'},
+ copro_metrics:{lot_annual_charges:1976.66},
+ copro:{recurring_topics:['Ascenseur','Toiture','VMC'],litigation:[]},
+ works:{voted:[],discussed:[],rejected_or_postponed:[],recommended_pppt:[],recent_completed:[]},
+ market:{}
+},partialAgDocs,{officialCount:0});
+assert.equal(partialScores.copro,null,'Des AG seulement partielles et des charges courantes ne doivent pas produire un score copropriété rassurant');
+
 const many=Array.from({length:30},(_,i)=>({name:`doc-${i}.pdf`,text:'X'.repeat(100000),pages:10,quality:'ok'}));
 const prepared=prepareDocs(many);
 assert.equal(prepared.length,30,'Aucun document ne doit disparaître à cause du budget global');
