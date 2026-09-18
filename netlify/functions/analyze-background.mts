@@ -10,7 +10,7 @@ const safeJsonFromText=(value:string)=>{
   const cleaned=String(value||"").trim().replace(/^```json\s*/i,"").replace(/```$/i,"").trim();
   try{return JSON.parse(cleaned)}catch{}
   const s=cleaned.indexOf("{"),e=cleaned.lastIndexOf("}");
-  if(s>=0&&e>s)return JSON.parse(cleaned.slice(s,e+1));
+  if(s>=0&&e>s){try{return JSON.parse(cleaned.slice(s,e+1))}catch{}}
   throw new Error("Réponse IA non structurée");
 };
 
