@@ -1,0 +1,41 @@
+name: ReVisite live mixed-upload one-shot
+
+on:
+  push:
+    branches: [upload-limit-fix-v1]
+    paths:
+      - '.github/workflows/live-upload-mixed-once.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  mixed-upload:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Verify one unreadable PDF does not block readable PDFs
+        shell: bash
+        run: |
+          set -euo pipefail
+          BASE="https://revisite-demo.netlify.app"
+          JOB="mixed_upload_${GITHUB_RUN_ID}_${GITHUB_RUN_ATTEMPT}"
+          GOOD=$(python3 - <<'PY'
+print("Diagnostic exploitable, surface Carrez 83,44 m2, DPE C. "*12)
+PY
+)
+          PAYLOAD=$(jq -n --arg job "$JOB" --arg good "$GOOD" '{
+            jobId:$job,
+            batchIndex:0,
+            documents:[
+              {index:0,name:"diagnostics.pdf",text:$good,pages:2,quality:"ok",ocrPages:0,weakPages:0},
+              {index:1,name:"plan.pdf",text:"x",pages:1,quality:"failed",ocrPages:1,weakPages:1}
+            ]
+          }')
+          HTTP=$(curl -sS -o /tmp/resp.json -w '%{http_code}' -X POST "$BASE/api/upload-document" -H 'content-type: application/json' -d "$PAYLOAD")
+          cat /tmp/resp.json
+          test "$HTTP" = "200"
+          jq -e '.count == 1 and .rejected == 1' /tmp/resp.json >/dev/null
+          jq -e '.documents | length == 2' /tmp/resp.json >/dev/null
+          jq -e '.documents[0].accepted == true and .documents[1].accepted == false' /tmp/resp.json >/dev/null
+          echo "LIVE_MIXED_UPLOAD_OK"
