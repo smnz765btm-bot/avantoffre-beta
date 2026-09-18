@@ -304,7 +304,8 @@ export function selectOfficialComparables(candidates=[],property={}){
 }
 
 export function applyOfficialMarketData(analysis,candidates=[]){
-  const a=normalizeAnalysis(analysis);const comps=selectOfficialComparables(candidates,a.property);
+  const a=normalizeAnalysis(analysis),comps=selectOfficialComparables(candidates,a.property);
+  a.market.offer_low=null;a.market.offer_high=null;
   if(comps.length){
     a.market.comparables=comps;
     a.market.confidence=comps.length>=3?'bonne':'moyenne';
@@ -312,14 +313,33 @@ export function applyOfficialMarketData(analysis,candidates=[]){
     if(surface&&pms.length>=2){
       const q25=percentile(pms,.25),q75=percentile(pms,.75),med=median(pms);
       const low=Math.round(surface*(q25??med)*.95/1000)*1000,high=Math.round(surface*(q75??med)*1.05/1000)*1000;
-      a.market.dvf_reference={low,high,median_price_m2:Math.round(med),count:comps.length,source:comps[0]?.source||'DVF open-data'};
-      const aiLow=num(a.market.estimate_low),aiHigh=num(a.market.estimate_high);
-      const grosslyOutside=aiLow&&aiHigh&&(aiHigh<low*.72||aiLow>high*1.28||aiLow>aiHigh);
-      if(!aiLow||!aiHigh||grosslyOutside){a.market.estimate_low=low;a.market.estimate_high=high;a.market.positioning=[text(a.market.positioning),'Fourchette recalée sur les ventes DVF+ disponibles dans le secteur.'].filter(Boolean).join(' ');}
+      const source=comps[0]?.source||'DVF open-data';
+      const minPm=Math.min(...pms),maxPm=Math.max(...pms);
+      a.market.dvf_reference={low,high,median_price_m2:Math.round(med),count:comps.length,source};
+      // Official comparables always prevail over an AI-generated price range.
+      a.market.estimate_low=low;a.market.estimate_high=high;
+      const ask=num(a.property.asking_price);
+      if(ask&&high){
+        if(ask>high){
+          const delta=Math.round((ask/high-1)*100);
+          a.market.positioning=`Prix affiché environ ${delta}% au-dessus de la borne haute de la fourchette DVF indicative.`;
+        }else if(ask<low){
+          const delta=Math.round((1-ask/low)*100);
+          a.market.positioning=`Prix affiché environ ${delta}% sous la borne basse de la fourchette DVF indicative.`;
+        }else a.market.positioning='Prix affiché dans la fourchette DVF indicative calculée.';
+      }else a.market.positioning='Fourchette indicative calculée exclusivement à partir des ventes DVF retenues.';
+      a.market.analysis=`${comps.length} ventes DVF officielles retenues · ${Math.round(minPm)} à ${Math.round(maxPm)} €/m² · médiane ${Math.round(med)} €/m². Fourchette indicative pour ${Math.round(surface*100)/100} m² : ${low.toLocaleString('fr-FR')} à ${high.toLocaleString('fr-FR')} €.`;
+    }else{
+      a.market.estimate_low=null;a.market.estimate_high=null;
+      a.market.positioning='Ventes DVF disponibles mais insuffisantes pour calculer une fourchette fiable.';
+      a.market.analysis=a.market.positioning;
     }
   }else{
-    a.market.comparables=arr(a.market.comparables).filter(c=>String(c?.type||'').toLowerCase()!=='dvf');
+    a.market.comparables=[];
+    a.market.estimate_low=null;a.market.estimate_high=null;
     a.market.confidence='faible';
+    a.market.positioning='Aucun comparable DVF suffisamment proche du bien n’a été retenu.';
+    a.market.analysis=a.market.positioning;
   }
   return a;
 }
