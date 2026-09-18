@@ -24,7 +24,7 @@ const many=Array.from({length:30},(_,i)=>({name:`doc-${i}.pdf`,text:'X'.repeat(1
 const prepared=prepareDocs(many);
 assert.equal(prepared.length,30,'Aucun document ne doit disparaître à cause du budget global');
 assert.ok(prepared.every(d=>d.chars_transmitted>0),'Chaque document doit transmettre du contenu');
-assert.ok(prepared.reduce((s,d)=>s+d.chars_transmitted,0)<=900000,'Le budget global de caractères doit être respecté');
+assert.ok(prepared.reduce((s,d)=>s+d.chars_transmitted,0)<=360000,'Le budget global de caractères doit être respecté');
 
 const analysis=normalizeAnalysis({property:{surface_m2:83.44,title:'Appartement T4'},market:{comparables:[{type:'DVF',price:1}]},risk_flags:{electrical_anomalies:false},evidence:[{claim:'x',status:'FACT',source:''}]});
 assert.equal(analysis.evidence[0].status,'UNKNOWN','Un fait sans source ne doit pas rester FACT');
@@ -42,3 +42,6 @@ assert.equal(market.market.comparables.length,3,'Les comparables IA non vérifi�
 assert.ok(market.market.estimate_low&&market.market.estimate_high,'Une fourchette DVF doit pouvoir être calculée');
 
 console.log('ReVisite reliability tests: OK');
+
+const compact=prepareDocs(many,{maxTotal:180000,maxDoc:30000});
+assert.ok(compact.reduce((s,d)=>s+d.chars_transmitted,0)<=180000,'Le mode compact doit réduire fortement le contexte');
