@@ -1,6 +1,6 @@
 import type { Context, Config } from "@netlify/functions";
 import { jobStore, expiresIn, isExpired } from "../lib/storage.mjs";
-import { prepareDocs, normalizeAnalysis, applyDeterministicFacts, applyOfficialMarketData, deterministicScores, hardenScores, num } from "../lib/reliability-core.mjs";
+import { prepareDocs, normalizeAnalysis, applyDeterministicFacts, parseStaticDvfCsv, applyOfficialMarketData, deterministicScores, hardenScores, num } from "../lib/reliability-core.mjs";
 
 type Doc={name:string;text:string;pages?:number;chars?:number;quality?:string;ocrPages?:number;weakPages?:number;pageStats?:any[]};
 
