@@ -4,7 +4,7 @@ import { jobStore, expiresIn, isExpired } from "../lib/storage.mjs";
 const json=(body:any,status=200)=>new Response(JSON.stringify(body),{status,headers:{"Content-Type":"application/json; charset=utf-8","Cache-Control":"no-store"}});
 const limitEnv=(key:string,fallback:number)=>{const n=Number(Netlify.env.get(key));return Number.isFinite(n)&&n>0?Math.floor(n):fallback};
 const hash=async(value:string)=>Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256",new TextEncoder().encode(value)))).map(b=>b.toString(16).padStart(2,"0")).join("").slice(0,24);
-const CACHE_VERSION="revisite-analysis-v7";
+const CACHE_VERSION="revisite-analysis-v8";
 
 function hasUsableOpenAIKey(){
   const direct=String(Netlify.env.get("OPENAI_API_KEY")||"").trim();
