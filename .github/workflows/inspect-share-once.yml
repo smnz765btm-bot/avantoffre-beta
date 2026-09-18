@@ -14,22 +14,32 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 3
     steps:
-      - name: Inspect current DVF CSV schema
+      - name: Inspect real 299k DVF rows after redirect
         shell: bash
         run: |
           set -euo pipefail
-          curl -sS --max-time 25 'https://files.data.gouv.fr/geo-dvf/latest/csv/2025/communes/31/31555.csv' -o /tmp/dvf.csv
+          curl -L -sS --max-time 25 'https://files.data.gouv.fr/geo-dvf/latest/csv/2025/communes/31/31555.csv' -o /tmp/dvf.csv
           python3 - <<'PY'
-          import csv, json
-          raw=open('/tmp/dvf.csv','r',encoding='utf-8-sig').read(4096)
-          print('PREFIX',repr(raw[:240]))
-          try:
-              d=csv.Sniffer().sniff(raw,delimiters=',;\t|')
-              print('DELIMITER',repr(d.delimiter))
-          except Exception as e:
-              print('DELIMITER_ERR',str(e))
-          first=raw.splitlines()[0]
-          print('HEADER_COUNT_COMMA',len(first.split(',')))
-          print('HEADER_COUNT_SEMI',len(first.split(';')))
-          print('HEADER',first[:1500])
+          import csv, json, math
+          lat0,lon0=43.642529,1.456254
+          out=[]
+          with open('/tmp/dvf.csv',encoding='utf-8-sig') as fh:
+              for r in csv.DictReader(fh):
+                  try:
+                      price=float(r['valeur_fonciere']); surf=float(r['surface_reelle_bati']); lat=float(r['latitude']); lon=float(r['longitude'])
+                  except:
+                      continue
+                  if r.get('type_local')!='Appartement' or price!=299000 or not (80<=surf<=90):
+                      continue
+                  dlat=math.radians(lat-lat0); dlon=math.radians(lon-lon0)
+                  a=math.sin(dlat/2)**2+math.cos(math.radians(lat0))*math.cos(math.radians(lat))*math.sin(dlon/2)**2
+                  dist=6371000*2*math.atan2(math.sqrt(a),math.sqrt(max(0,1-a)))
+                  out.append({
+                      'id_mutation':r.get('id_mutation'),'date':r.get('date_mutation'),'surface':surf,'rooms':r.get('nombre_pieces_principales'),
+                      'nombre_lots':r.get('nombre_lots'),'distance_m':round(dist),
+                      'lot1_numero':r.get('lot1_numero'),'lot1_surface_carrez':r.get('lot1_surface_carrez'),
+                      'lot2_numero':r.get('lot2_numero'),'lot2_surface_carrez':r.get('lot2_surface_carrez'),
+                      'lot3_numero':r.get('lot3_numero'),'lot3_surface_carrez':r.get('lot3_surface_carrez')
+                  })
+          print(json.dumps(out,ensure_ascii=False,indent=2))
           PY
