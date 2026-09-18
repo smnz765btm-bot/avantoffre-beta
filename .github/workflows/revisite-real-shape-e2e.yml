@@ -92,6 +92,10 @@ jobs:
           scanned_pdf('6354_PV_AG_16062025.pdf',12,'ASSEMBLEE GENERALE 16 JUIN 2025')
           scanned_pdf('6354_PV_AGS_04122025.pdf',13,'ASSEMBLEE GENERALE 04 DECEMBRE 2025')
           scanned_pdf('6354_PV_AG_190326.pdf',17,'ASSEMBLEE GENERALE 19 MARS 2026')
+          native_pdf('AnnexesERP_11308889.pdf',10,[
+              'Etat des risques et pollutions ERP.',
+              'Informations environnementales et risques naturels.'
+          ],'Annexes ERP risques naturels technologiques pollution.')
           PY
       - name: Run production real-shape flow
         run: |
@@ -108,6 +112,7 @@ jobs:
           });
           await page.goto('https://revisite-demo.netlify.app/?stress=v4',{waitUntil:'networkidle'});
           await page.locator('#address').fill('26 chemin de Borderouge 31200 Toulouse');
+          await page.locator('#url').fill('https://example.com/annonce-test');
           await page.locator('#extra').fill('Test automatique dossier structure reelle v4.');
           const files=[
             '/tmp/revisite-shape/00000000 - Carnet Entretien.pdf',
@@ -116,11 +121,12 @@ jobs:
             '/tmp/revisite-shape/6354_PV_AG_190326.pdf',
             '/tmp/revisite-shape/6354_PV_AG_16062025.pdf',
             '/tmp/revisite-shape/6354_PV_AGS_04122025.pdf',
+            '/tmp/revisite-shape/AnnexesERP_11308889.pdf',
             '/tmp/revisite-shape/DECOMPTE.pdf',
             '/tmp/revisite-shape/DIA-BZR09-2603-048_Dossier_Mr_GILLES_ANDRE.pdf'
           ];
           await page.locator('#files').setInputFiles(files);
-          await page.waitForFunction(()=>document.querySelectorAll('#filesList .file').length===8);
+          await page.waitForFunction(()=>document.querySelectorAll('#filesList .file').length===9);
           await page.locator('#analyze').click();
           await page.waitForFunction(()=>{
             const report=document.querySelector('#report');
