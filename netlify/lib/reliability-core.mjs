@@ -187,7 +187,8 @@ export function deterministicScores(a,docs=[],marketMeta={}){
   const financeEvidence=["annual_budget","collective_arrears","supplier_debt","cash","works_fund"].some(k=>num(coproMetrics?.[k])!==null);
   const worksEvidence=[...arr(a?.works?.voted),...arr(a?.works?.discussed),...arr(a?.works?.rejected_or_postponed),...arr(a?.works?.recommended_pppt),...arr(a?.works?.recent_completed)].length>0;
   const governanceEvidence=arr(a?.copro?.litigation).length>0||arr(a?.copro?.recurring_topics).length>0||Boolean(r.governance_issue||r.litigation);
-  const strongDocEvidence=coverage.score>=60&&coverage.readability>=70&&Boolean(coproCategories.ag||coproCategories.accounts||coproCategories.synthese);
+  const strongCoproDocs=Array.isArray(docs)&&docs.some(d=>{const s=docSignal(d);return s.readability>=0.9&&Boolean(s.categories.ag||s.categories.accounts||s.categories.synthese)});
+  const strongDocEvidence=coverage.score>=60&&coverage.readability>=70&&strongCoproDocs;
   const coproEvidence=Boolean(financeEvidence||worksEvidence||governanceEvidence||strongDocEvidence);
   const propertyScore=propertyEvidence?property:null;
   const coproScore=coproEvidence?copro:null;
