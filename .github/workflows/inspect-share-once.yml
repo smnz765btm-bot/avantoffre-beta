@@ -14,25 +14,22 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 3
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-      - name: Compare JS DVF parser with CSV structure
+      - name: Inspect current DVF CSV schema
         shell: bash
         run: |
           set -euo pipefail
           curl -sS --max-time 25 'https://files.data.gouv.fr/geo-dvf/latest/csv/2025/communes/31/31555.csv' -o /tmp/dvf.csv
-          cp /tmp/dvf.csv ./dvf.csv
-          cat > ./inspect-dvf.mjs <<'JS'
-          import fs from 'node:fs';
-          import {parseStaticDvfCsv} from './netlify/lib/reliability-core.mjs';
-          const csv=fs.readFileSync('./dvf.csv','utf8');
-          const rows=parseStaticDvfCsv(csv,{lat:43.642529,lon:1.456254,maxDistanceM:1200,source:'data.gouv.fr — DVF Etalab'});
-          console.log(JSON.stringify({
-            total:rows.length,
-            suspicious:rows.filter(r=>r.valeurfonc===299000 && r.sbati>=80 && r.sbati<=90).slice(0,10),
-            nearest:rows.slice(0,10).map(r=>({price:r.valeurfonc,surface:r.sbati,date:r.datemut,distance_m:r.distance_m,address:r.address,id:r.id_mutation}))
-          },null,2));
-          JS
-          node ./inspect-dvf.mjs
+          python3 - <<'PY'
+          import csv, json
+          raw=open('/tmp/dvf.csv','r',encoding='utf-8-sig').read(4096)
+          print('PREFIX',repr(raw[:240]))
+          try:
+              d=csv.Sniffer().sniff(raw,delimiters=',;\t|')
+              print('DELIMITER',repr(d.delimiter))
+          except Exception as e:
+              print('DELIMITER_ERR',str(e))
+          first=raw.splitlines()[0]
+          print('HEADER_COUNT_COMMA',len(first.split(',')))
+          print('HEADER_COUNT_SEMI',len(first.split(';')))
+          print('HEADER',first[:1500])
+          PY
