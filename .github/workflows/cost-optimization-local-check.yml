@@ -67,7 +67,10 @@ jobs:
           import { chromium } from 'playwright';
           const browser=await chromium.launch({headless:true});
           const page=await browser.newPage();
-          page.setDefaultTimeout(120000);
+          page.setDefaultTimeout(60000);
+          page.on('console',m=>console.log('BROWSER_CONSOLE',m.type(),m.text()));
+          page.on('pageerror',e=>console.log('BROWSER_PAGEERROR',e.message));
+          page.on('requestfailed',r=>console.log('REQUEST_FAILED',r.url(),r.failure()?.errorText||''));
 
           let uploadCalls=0,statusCalls=0,legacyAddressCalls=0;
           const result={
@@ -113,7 +116,16 @@ jobs:
           await page.locator('#address').press('ArrowDown').catch(()=>{});
           await page.locator('#files').setInputFiles(Array.from({length:9},(_,i)=>'/tmp/revisite-docs/doc-'+(i+1)+'.pdf'));
           await page.locator('#analyze').click();
-          await page.locator('#report').waitFor({state:'visible',timeout:120000});
+          for(let i=0;i<40;i++){
+            if(await page.locator('#report').isVisible())break;
+            await page.waitForTimeout(500);
+          }
+          if(!await page.locator('#report').isVisible()){
+            console.log('DEBUG_STATUS',await page.locator('#status').innerText().catch(()=>'')); 
+            console.log('DEBUG_LOADING',await page.locator('#loadingText').innerText().catch(()=>'')); 
+            console.log('DEBUG_COUNTS',JSON.stringify({uploadCalls,statusCalls,legacyAddressCalls}));
+            throw new Error('Report did not become visible');
+          }
           const text=(await page.locator('#report').innerText()).toLowerCase();
 
           if(uploadCalls!==1) throw new Error('Expected 1 batched upload call, got '+uploadCalls);
