@@ -235,6 +235,7 @@ Retourne uniquement un objet JSON valide correspondant aux rubriques demandées.
     }
     const degradedMode=Boolean(lastError||!parsed);
     let analysis=degradedMode?basicFallbackAnalysis(docs,address):normalizeAnalysis(parsed);
+    analysis=applyDeterministicFacts(analysis,docs);
     if(address)analysis.property.address=address;
     analysis=applyOfficialMarketData(analysis,dvf.candidates||[]);
     analysis.documents=analysis.documents||{};
