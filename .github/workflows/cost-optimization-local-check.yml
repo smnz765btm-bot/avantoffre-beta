@@ -2,9 +2,10 @@ name: ReVisite cost optimization local check
 
 on:
   push:
-    branches: [cost-optimization-v1, upload-limit-fix-v1]
+    branches: [cost-optimization-v1, upload-limit-fix-v1, reliability-report-v1]
     paths:
       - 'index.html'
+      - 'share.html'
       - 'ui-enhancements.js'
       - 'build-revisite.js'
       - 'netlify/**'
@@ -143,6 +144,33 @@ jobs:
           if(!text.replace(/[^0-9]/g,'').includes('1977')&&!text.replace(/[^0-9]/g,'').includes('1976')) throw new Error('Charges control missing');
 
           console.log(JSON.stringify({uploadCalls,statusCalls,legacyAddressCalls,report:'ok'}));
+
+          const shared=await browser.newPage();
+          const legacyShared={
+            result:{
+              analysis:{
+                property:{address:'26 Chemin de Borderouge, 31200 Toulouse',surface_m2:83.44,rooms:4,floor:'2e étage',dpe:null,asking_price:null,diagnostics:['Électricité : aucune anomalie'],weaknesses:['Balcon non inclus dans la surface Carrez']},
+                market:{estimate_low:null,estimate_high:null,comparables:[],analysis:''},
+                copro_metrics:{lot_annual_charges:1976.66,annual_budget:null,collective_arrears:null,works_fund:null,cash:null},
+                copro:{financial_analysis:'Charges 2025 documentées.',litigation:['Procédures en cours : RAS']},
+                works:{voted:[],discussed:[],recommended_pppt:[],recent_completed:[]},
+                buyer_blocks:{diagnostic_works:{items:[]},future_copro_costs:{items:[]},real_acquisition_budget:{},before_offer_checks:{checks:[]}},
+                documents:{received:['DECOMPTE.pdf','DIA.pdf'],rejected:[{name:'plan.pdf',reason:'Non exploitable'}],missing_or_to_obtain:[]},
+                executive_summary:{headline:'Analyse',overview:'Dossier partiellement documenté.',top_strengths:['83,44 m²'],top_risks:['Prix et marché non documentés']},
+                evidence:[],questions_before_offer:[],verdict:{label:'À documenter',summary:'',why:''}
+              },
+              scores:{property:82,copro:95,market:null,documentation:67,confidence:59,overall:0},
+              meta:{score_withheld:true,dvf_status:'unavailable',degraded_mode:false,document_count:2}
+            }
+          };
+          await shared.route('**/api/shared-analysis**',async route=>route.fulfill({status:200,contentType:'application/json',body:JSON.stringify(legacyShared)}));
+          await shared.goto('http://127.0.0.1:4173/share.html?id=test',{waitUntil:'networkidle'});
+          const sharedText=(await shared.locator('#app').innerText()).toLowerCase();
+          if(!sharedText.includes('revisite')) throw new Error('Shared report branding is not ReVisite');
+          if(sharedText.includes('95/100')||sharedText.includes('0/100')) throw new Error('Unsupported legacy scores are still displayed');
+          if(!sharedText.includes('dvf+ officiel indisponible')) throw new Error('DVF outage is not clearly disclosed');
+          if(!sharedText.includes('n/c')) throw new Error('Withheld scores must display N/C');
+          console.log(JSON.stringify({share:'ok',legacyScores:'withheld'}));
           await browser.close();
           JS
           node ./cost-local-e2e.mjs
