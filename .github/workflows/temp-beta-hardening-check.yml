@@ -34,3 +34,5 @@ jobs:
               Path('/tmp/'+name+'.js').write_text(js)
           PY
           node --check /tmp/share.html.js
+
+# rerun after parking plural fix
