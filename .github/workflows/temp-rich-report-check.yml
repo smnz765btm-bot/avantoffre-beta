@@ -1,0 +1,33 @@
+name: Temporary rich report check
+
+on:
+  push:
+    branches: [fix-rich-shared-report]
+    paths:
+      - '.github/workflows/temp-rich-report-check.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - run: npm install --no-audit --no-fund
+      - run: npm test
+      - run: npm run build
+      - name: Check shared report JavaScript syntax
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          s=Path('share.html').read_text()
+          js=s.split('<script>',1)[1].split('</script>',1)[0]
+          Path('/tmp/share.js').write_text(js)
+          PY
+          node --check /tmp/share.js
+          echo RICH_REPORT_CHECK_OK
