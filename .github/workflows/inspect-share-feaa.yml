@@ -1,0 +1,27 @@
+name: Inspect shared ReVisite result feaa
+
+on:
+  push:
+    branches: [inspect-share-feaa]
+    paths:
+      - '.github/workflows/inspect-share-feaa.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Fetch shared analysis JSON
+        shell: bash
+        run: |
+          set -euo pipefail
+          URL="https://revisite-demo.netlify.app/api/shared-analysis?id=feaa12bcecf646a5a58714de"
+          curl --retry 3 --retry-delay 2 -sSf "$URL" -o /tmp/shared.json
+          python3 - <<'PY'
+          import json
+          data=json.load(open('/tmp/shared.json'))
+          print(json.dumps(data,ensure_ascii=False,indent=2)[:70000])
+          PY
