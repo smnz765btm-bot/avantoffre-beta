@@ -1,0 +1,42 @@
+name: Validate rich shared report live
+
+on:
+  push:
+    branches: [inspect-share-4350]
+    paths:
+      - '.github/workflows/validate-rich-share.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - name: Install Playwright
+        run: |
+          npm install --no-save playwright@1.55.0
+          npx playwright install --with-deps chromium
+      - name: Validate live shared report
+        run: |
+          cat > /tmp/check.mjs <<'JS'
+          import { chromium } from 'playwright';
+          const browser=await chromium.launch({headless:true});
+          const page=await browser.newPage();
+          await page.goto('https://revisite-demo.netlify.app/share.html?id=4350da60054e4c5f96dcd523',{waitUntil:'networkidle'});
+          const text=(await page.locator('body').innerText()).toLowerCase();
+          for(const expected of [
+            'ventes comparables retenues',
+            'gouvernance',
+            'budget prévisionnel 2025-2026',
+            'travaux récemment réalisés',
+            'documents ou informations à obtenir',
+            'faits sourcés',
+            'questions concrètes à poser'
+          ]) if(!text.includes(expected)) throw new Error('Missing: '+expected);
+          console.log('RICH_SHARE_OK');
+          console.log(text.slice(0,12000));
+          await browser.close();
+          JS
+          node /tmp/check.mjs
