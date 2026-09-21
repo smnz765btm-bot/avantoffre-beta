@@ -207,6 +207,144 @@ export function normalizeAnalysis(input){
   return a;
 }
 
+function wordNumber(v){
+  const s=String(v||'').toLowerCase();
+  if(/^\d+$/.test(s))return Number(s);
+  return({un:1,une:1,deux:2,trois:3,quatre:4}[s]??null);
+}
+
+function parkingCountsFromText(raw){
+  const out=[];
+  const re=/\b(\d|un|une|deux|trois|quatre)\s+(?:places?\s+(?:de\s+)?stationnement|places?\s+de\s+parking|parkings?)\b/gi;
+  for(const m of String(raw||'').matchAll(re)){const n=wordNumber(m[1]);if(Number.isFinite(n)&&n>=0&&n<=9)out.push(n)}
+  return out;
+}
+
+function constructionYearsFromText(raw){
+  const out=[];
+  const s=String(raw||'');
+  const re=/(?:ann[ée]e\s+(?:de\s+)?construction|date\s+de\s+construction|construit[ea]?\s+en|construction\s+(?:achev[ée]e?\s+en|en)|livr[ée]e?\s+en|mise\s+en\s+service\s+en|r[ée]sidence.{0,45}?(?:date\s+de|construite?\s+en|livr[ée]e?\s+en))[^0-9]{0,35}(19\d{2}|20\d{2})/gi;
+  for(const m of s.matchAll(re)){const y=Number(m[1]);if(y>=1800&&y<=2100)out.push(y)}
+  return out;
+}
+
+function agYearsFromName(name){
+  const s=String(name||'');
+  if(!/(?:^|[^a-z])(?:ag|pv)(?:[^a-z]|$)|assembl[ée]e/i.test(s))return[];
+  const out=[...s.matchAll(/\b(20\d{2})\b/g)].map(m=>Number(m[1]));
+  if(!out.length){
+    const m=s.match(/(?:^|[^a-z])(?:ag|pv)[^0-9]{0,5}(\d{2})(?:[^0-9]|$)/i);
+    if(m){const y=Number(m[1]);if(y>=0&&y<=99)out.push(2000+y)}
+  }
+  return [...new Set(out)];
+}
+
+function uniqueTextPush(a,v){
+  const s=String(v||'').trim();if(!s)return;
+  if(!a.some(x=>String(x||'').trim().toLowerCase()===s.toLowerCase()))a.push(s);
+}
+
+export function applyDeterministicGuardrails(analysis,{docs=[],documentIssues=[],extra=''}={}){
+  const a=normalizeAnalysis(analysis);
+  const issues=Array.isArray(documentIssues)?documentIssues:[];
+  const docList=Array.isArray(docs)?docs:[];
+  const rejectedNames=issues.map(x=>String(x?.name||''));
+  const receivedNames=docList.map(x=>String(x?.name||''));
+  const allDocNames=[...receivedNames,...rejectedNames];
+  const importantRejected=issues.filter(x=>/(?:^|[_\s.-])(?:ag|pv)(?:[_\s.-]|$)|assembl|rcp|r[èe]glement.*copro|[ée]tat\s+descriptif|annexe\s+comptable/i.test(String(x?.name||'')));
+
+  const signalText=[
+    ...a.property.weaknesses,...a.property.diagnostics,
+    a.property.property_analysis,a.copro.financial_analysis,a.copro.governance_analysis,a.copro.technical_analysis,
+    ...a.copro.weaknesses,...a.works.voted,...a.works.discussed,...a.works.recommended_pppt,
+    a.buyer_blocks.diagnostic_works.summary,...a.buyer_blocks.diagnostic_works.items,
+    a.buyer_blocks.future_copro_costs.summary,...a.buyer_blocks.future_copro_costs.unknown_exposure,
+    a.buyer_blocks.before_offer_checks.summary,...a.buyer_blocks.before_offer_checks.checks,
+    ...a.documents.missing_or_to_obtain,...rejectedNames
+  ].map(x=>typeof x==='string'?x:JSON.stringify(x||'')).join('\n').toLowerCase();
+
+  const r=obj(a.risk_flags);
+  if(/anomal(?:ie|ies).{0,40}[ée]lectr|[ée]lectr.{0,40}anomal|protection\s+diff[ée]rentielle|mise\s+en\s+s[ée]curit[ée]\s+[ée]lectrique|bouton\s+test.{0,25}(?:hs|hors\s+service)/i.test(signalText))r.electrical_anomalies=true;
+  if(importantRejected.length||/(?:documents?|pi[èe]ces?).{0,60}(?:copropri[ée]t[ée]|ag|r[èe]glement).{0,60}(?:incomplet|non\s+exploitable|illisible|manquant)/i.test(signalText))r.copro_documents_incomplete=true;
+  if(/mouvement\s+de\s+terrain|retrait[-\s]gonflement|argiles?.{0,35}(?:moyen|fort|al[ée]a)/i.test(signalText))r.movement_ground_risk=true;
+  a.risk_flags=r;
+
+  const knownAgYears=[...new Set(allDocNames.flatMap(agYearsFromName))].sort();
+  const rejectedAgYears=[...new Set(rejectedNames.flatMap(agYearsFromName))].sort();
+  const hasUnsupportedAgYear=s=>{
+    if(!/assembl[ée]e|\bAG\b|proc[èe]s[- ]verbal|\bPV\b/i.test(String(s||'')))return false;
+    const years=[...String(s||'').matchAll(/\b(20\d{2})\b/g)].map(m=>Number(m[1]));
+    return years.some(y=>!knownAgYears.includes(y));
+  };
+  const pvLabel=rejectedAgYears.length?`Obtenir une version lisible des PV d’AG ${rejectedAgYears.join(' et ')} et les derniers PV disponibles.`:'Obtenir les derniers PV d’AG disponibles.';
+  a.documents.missing_or_to_obtain=a.documents.missing_or_to_obtain.map(x=>hasUnsupportedAgYear(x)?pvLabel:x);
+  a.buyer_blocks.before_offer_checks.checks=a.buyer_blocks.before_offer_checks.checks.map(x=>hasUnsupportedAgYear(x)?pvLabel:x);
+  a.negotiation.conditions_before_offer=arr(a.negotiation.conditions_before_offer).map(x=>hasUnsupportedAgYear(x)?pvLabel:x);
+  a.questions_before_offer=a.questions_before_offer.map(x=>hasUnsupportedAgYear(x)?'Quels sont les résultats des derniers PV d’AG disponibles qui ne sont pas encore exploitables ?':x);
+  a.documents.missing_or_to_obtain=[...new Set(a.documents.missing_or_to_obtain)];
+  a.buyer_blocks.before_offer_checks.checks=[...new Set(a.buyer_blocks.before_offer_checks.checks)];
+  a.questions_before_offer=[...new Set(a.questions_before_offer)].slice(0,5);
+
+  if(docList.length){
+    const parkingSources=[];
+    for(const d of docList){
+      const counts=[...new Set(parkingCountsFromText(d?.text))];
+      if(counts.length)parkingSources.push({name:String(d?.name||'document'),counts});
+    }
+    const extraParking=[...new Set(parkingCountsFromText(extra))];
+    const allParkingCounts=[...new Set([...parkingSources.flatMap(x=>x.counts),...extraParking])];
+    const sameParkingSources=allParkingCounts.length===1?parkingSources.filter(x=>x.counts.includes(allParkingCounts[0])).length:0;
+    const parkingConflict=allParkingCounts.length>1;
+    if(parkingConflict){
+      uniqueTextPush(a.buyer_blocks.before_offer_checks.inconsistencies,`Nombre de stationnements à confirmer : des informations différentes apparaissent dans le dossier${extraParking.length?' et/ou dans les informations complémentaires':''}.`);
+      a.property.assets=a.property.assets.map(x=>/\b(?:parking|stationnement)\b/i.test(text(x))?'Stationnement : nombre de places à confirmer.':x);
+      a.executive_summary.top_strengths=a.executive_summary.top_strengths.map(x=>/\b(?:parking|stationnement)\b/i.test(text(x))?'Stationnement à confirmer dans les lots vendus.':x);
+      if(/\b(?:parking|stationnement)\b/i.test(text(a.property.title)))a.property.title=text(a.property.title).replace(/\s+(?:avec|et)\s+(?:\d|un|une|deux|trois|quatre)\s+(?:places?\s+(?:de\s+)?stationnement|places?\s+de\s+parking|parkings?)/ig,' avec stationnement à confirmer');
+    }else if(allParkingCounts.length===1&&sameParkingSources<2&&!extraParking.length){
+      const n=allParkingCounts[0];
+      a.property.assets=a.property.assets.map(x=>/\b(?:parking|stationnement)\b/i.test(text(x))?`Stationnement annoncé : ${n} place${n>1?'s':''}, à confirmer dans les lots vendus.`:x);
+      a.executive_summary.top_strengths=a.executive_summary.top_strengths.map(x=>/\b(?:parking|stationnement)\b/i.test(text(x))?`Stationnement annoncé : ${n} place${n>1?'s':''}, à confirmer.`:x);
+      uniqueTextPush(a.buyer_blocks.before_offer_checks.checks,'Confirmer le nombre et les numéros de lots de stationnement vendus.');
+    }
+
+    const yearSources=[];
+    for(const d of docList){
+      const years=[...new Set(constructionYearsFromText(d?.text))];
+      if(years.length)yearSources.push({name:String(d?.name||'document'),years});
+    }
+    const allYears=[...new Set(yearSources.flatMap(x=>x.years))];
+    if(allYears.length>1){
+      uniqueTextPush(a.buyer_blocks.before_offer_checks.inconsistencies,`Année de construction à confirmer : plusieurs dates (${allYears.sort().join(', ')}) apparaissent dans les pièces exploitées.`);
+      a.copro.technical_analysis=text(a.copro.technical_analysis).replace(/(?:la\s+)?r[ée]sidence\s+date\s+de\s+(?:19|20)\d{2}\.?/ig,'L’année de construction de la résidence est à confirmer.');
+    }else{
+      const m=text(a.copro.technical_analysis).match(/(?:la\s+)?r[ée]sidence\s+date\s+de\s+((?:19|20)\d{2})/i);
+      if(m){
+        const y=Number(m[1]),support=yearSources.filter(x=>x.years.includes(y));
+        if(support.length<2){
+          const src=support[0]?.name;
+          a.copro.technical_analysis=text(a.copro.technical_analysis).replace(/(?:la\s+)?r[ée]sidence\s+date\s+de\s+(?:19|20)\d{2}\.?/i,src?`Une pièce (${src}) mentionne ${y} pour la résidence ; l’année de construction reste à confirmer.`:'L’année de construction de la résidence n’est pas suffisamment établie dans les pièces exploitées.');
+        }
+      }
+    }
+  }
+  return a;
+}
+
+export function applyVerdictGuardrails(analysis,scores,documentIssues=[]){
+  const a=normalizeAnalysis(analysis);
+  const issues=Array.isArray(documentIssues)?documentIssues:[];
+  const importantRejected=issues.filter(x=>/(?:^|[_\s.-])(?:ag|pv)(?:[_\s.-]|$)|assembl|rcp|r[èe]glement.*copro|[ée]tat\s+descriptif|annexe\s+comptable/i.test(String(x?.name||'')));
+  const coproUnsupported=scores?.evidence_gate?.copro===false||scores?.copro===null||scores?.copro===undefined;
+  const incomplete=Boolean(a?.risk_flags?.copro_documents_incomplete)||importantRejected.length>=2;
+  if((coproUnsupported||incomplete)&&/(?:favorable|rassurant|serein|feu\s+vert|bon\s+dossier)/i.test(text(a.verdict.label))){
+    a.verdict.label='À approfondir avant offre';
+    if(text(a.verdict.vigilance)==='faible')a.verdict.vigilance='modérée';
+    if(!text(a.verdict.summary))a.verdict.summary='Le bien reste analysable, mais certaines vérifications documentaires et techniques doivent être levées avant de s’engager.';
+  }
+  if(coproUnsupported&&text(a.verdict.vigilance)==='faible')a.verdict.vigilance='modérée';
+  return a;
+}
+
 export function hardenScores(result){
   const s=result?.scores;if(!s)return result;
   s.property=scoreNum(s.property);s.copro=scoreNum(s.copro);s.market=scoreNum(s.market);
