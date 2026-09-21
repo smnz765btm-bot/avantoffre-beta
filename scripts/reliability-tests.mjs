@@ -83,6 +83,16 @@ assert.ok(malformedNested.documents.missing_or_to_obtain.includes('AG 2025 lisib
 assert.equal(malformedNested.evidence[0].status,'FACT');
 assert.equal(malformedNested.verdict.label,'À approfondir');
 
+const dpeConflict=normalizeAnalysis({
+  property:{dpe:'B',assets:['DPE C']},
+  buyer_blocks:{before_offer_checks:{inconsistencies:[]}},
+  evidence:[{claim:'DPE C, 177 kWh/m²/an',status:'FACT',source:'fiche.pdf'}],
+  questions_before_offer:[]
+});
+assert.ok(dpeConflict.buyer_blocks.before_offer_checks.inconsistencies.some(x=>String(x).includes('DPE à clarifier')),'Une divergence DPE sourcée doit être signalée explicitement');
+assert.ok(dpeConflict.questions_before_offer.some(x=>String(x).includes('classe DPE')),'Une divergence DPE doit générer une question de vérification');
+assert.ok(dpeConflict.property.assets.includes('DPE B'),'Le résumé visuel doit rester cohérent avec la classe retenue');
+
 const sanitized=normalizeAnalysis({
  property:{weaknesses:['Balcon non inclus dans la surface Carrez','Infiltration constatée sur balcon']},
  copro:{litigation:['Carnet : procédures en cours RAS','Litige judiciaire documenté']},
