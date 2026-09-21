@@ -53,6 +53,36 @@ assert.equal(prepared.length,30,'Aucun document ne doit disparaître à cause du
 assert.ok(prepared.every(d=>d.chars_transmitted>0),'Chaque document doit transmettre du contenu');
 assert.ok(prepared.reduce((s,d)=>s+d.chars_transmitted,0)<=360000,'Le budget global de caractères doit être respecté');
 
+const malformedNested=normalizeAnalysis({
+  property:{
+    title:'Appartement T3',
+    surface_m2:62.33,
+    market:{estimate_low:140000,estimate_high:160000,analysis:'Marché IA'},
+    copro_metrics:{annual_budget:13548,lot_annual_charges:1306},
+    copro:{financial_analysis:'Budget approuvé',strengths:['Comptes approuvés']},
+    works:{recent_completed:['Portail remplacé']},
+    buyer_blocks:{before_offer_checks:{checks:['Vérifier AG 2025']}},
+    documents:{missing_or_to_obtain:['AG 2025 lisible']},
+    executive_summary:{top_strengths:['Terrasse']},
+    negotiation:{arguments:['Électricité à chiffrer']},
+    verdict:{label:'À approfondir'},
+    evidence:[{claim:'Charge annuelle',status:'FACT',source:'decompte.pdf'}],
+    questions_before_offer:['Travaux votés ?']
+  },
+  market:{estimate_low:124000,estimate_high:170000,comparables:[{price:136500}]},
+  documents:{received:['ag24.pdf'],quality_notes:['OCR partiel']}
+});
+assert.equal(malformedNested.property.market,undefined,'Les sections top-level ne doivent pas rester imbriquées dans property');
+assert.equal(malformedNested.copro_metrics.annual_budget,13548,'Les métriques copropriété imbriquées doivent être récupérées');
+assert.equal(malformedNested.copro.financial_analysis,'Budget approuvé');
+assert.deepEqual(malformedNested.works.recent_completed,['Portail remplacé']);
+assert.deepEqual(malformedNested.buyer_blocks.before_offer_checks.checks,['Vérifier AG 2025']);
+assert.equal(malformedNested.market.estimate_low,124000,'Les données marché déterministes déjà présentes doivent primer');
+assert.deepEqual(malformedNested.documents.received,['ag24.pdf']);
+assert.ok(malformedNested.documents.missing_or_to_obtain.includes('AG 2025 lisible'),'Les pièces manquantes imbriquées doivent être récupérées');
+assert.equal(malformedNested.evidence[0].status,'FACT');
+assert.equal(malformedNested.verdict.label,'À approfondir');
+
 const sanitized=normalizeAnalysis({
  property:{weaknesses:['Balcon non inclus dans la surface Carrez','Infiltration constatée sur balcon']},
  copro:{litigation:['Carnet : procédures en cours RAS','Litige judiciaire documenté']},
