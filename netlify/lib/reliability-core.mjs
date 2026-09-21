@@ -194,6 +194,15 @@ export function normalizeAnalysis(input){
     a.property.diagnostics=a.property.diagnostics.map(fixDpeText);
     a.executive_summary.top_strengths=a.executive_summary.top_strengths.map(fixDpeText);
     a.executive_summary.top_risks=a.executive_summary.top_risks.map(fixDpeText);
+    const sourceClasses=[...new Set(a.evidence.map(e=>text(e?.claim).match(/\bDPE\s*[:\-]?\s*([A-G])\b/i)?.[1]?.toUpperCase()).filter(Boolean))];
+    const conflicting=sourceClasses.filter(x=>x!==verifiedDpe);
+    if(conflicting.length){
+      const msg=`DPE à clarifier : la synthèse retient ${verifiedDpe}, tandis qu’une source transmise mentionne ${conflicting.join(' / ')}.`;
+      const inconsistencies=a.buyer_blocks.before_offer_checks.inconsistencies;
+      if(!inconsistencies.some(x=>text(x).toLowerCase().includes('dpe à clarifier')))inconsistencies.unshift(msg);
+      if(!a.questions_before_offer.some(x=>text(x).toLowerCase().includes('classe dpe')))a.questions_before_offer.unshift('Quelle est la classe DPE figurant sur le diagnostic de performance énergétique actuellement valable ?');
+      a.questions_before_offer=a.questions_before_offer.slice(0,5);
+    }
   }
   return a;
 }
