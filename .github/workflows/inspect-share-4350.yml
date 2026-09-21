@@ -1,0 +1,28 @@
+name: Inspect shared ReVisite result
+
+on:
+  push:
+    branches: [inspect-share-4350]
+    paths:
+      - '.github/workflows/inspect-share-4350.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Fetch shared analysis JSON
+        shell: bash
+        run: |
+          set -euo pipefail
+          URL="https://revisite-demo.netlify.app/api/shared-analysis?id=4350da60054e4c5f96dcd523"
+          curl --retry 3 --retry-delay 2 -sSf "$URL" -o /tmp/shared.json
+          python3 - <<'PY'
+          import json
+          p='/tmp/shared.json'
+          data=json.load(open(p))
+          print(json.dumps(data,ensure_ascii=False,indent=2)[:60000])
+          PY
