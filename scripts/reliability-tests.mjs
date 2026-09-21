@@ -215,6 +215,21 @@ assert.equal(mixedUpload.accepted[0].name,'diagnostics.pdf');
 assert.equal(mixedUpload.rejected[0].name,'plan.pdf');
 assert.equal(mixedUpload.rejected[0].accepted,false);
 
+const readableGraphicalPlan=partitionUploadDocuments([{
+  index:0,name:'PLAN_APT_B12.pdf',text:'[DOCUMENT GRAPHIQUE] T3 62,3 m2',quality:'partial',pages:1,weakPages:1,
+  documentKind:'graphical',extractedChars:24
+}]);
+assert.equal(readableGraphicalPlan.accepted.length,1,'Un plan avec un peu de texte OCR réellement détecté doit rester exploitable comme référence graphique');
+assert.equal(readableGraphicalPlan.accepted[0].documentKind,'graphical');
+assert.equal(readableGraphicalPlan.accepted[0].quality,'partial');
+
+const unreadableGraphicalPlan=partitionUploadDocuments([{
+  index:0,name:'PLAN_APT_B12.pdf',text:'x',quality:'failed',pages:1,weakPages:1,
+  documentKind:'graphical',extractedChars:1
+}]);
+assert.equal(unreadableGraphicalPlan.accepted.length,0,'Un plan sans texte réellement détecté ne doit pas être déclaré exploitable');
+assert.equal(unreadableGraphicalPlan.rejected.length,1);
+
 console.log('ReVisite reliability tests: OK');
 
 const compact=prepareDocs(many,{maxTotal:180000,maxDoc:30000});

@@ -41,7 +41,7 @@ export default async(req:Request,_context:Context)=>{
       return{
         index:d.index,name:d.name,chars:saved?.text?.length||0,actualChars:saved?.text?.length||0,
         quality:saved?.quality||"failed",accepted:Boolean(saved),error:d.error||null,
-        ocrPages:d.ocrPages,weakPages:d.weakPages,contentHash:saved?.contentHash||null
+        ocrPages:d.ocrPages,weakPages:d.weakPages,documentKind:d.documentKind||"text",extractedChars:d.extractedChars||0,contentHash:saved?.contentHash||null
       };
     });
     return json({

@@ -1,6 +1,7 @@
 name: ReVisite build check one-shot
 # validates latest production source
 # pass 7
+# document-confidence verification
 
 on:
   push:
