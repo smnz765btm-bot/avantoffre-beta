@@ -14,7 +14,7 @@ main{padding:28px 0}.card{background:#fff;border:1px solid var(--line);border-ra
 .tag{display:inline-block;padding:6px 9px;border-radius:99px;background:var(--soft);color:#184baf;font-size:10px;font-weight:800}.scope{padding:11px 13px;border-radius:12px;background:#f7f9fb;border:1px solid var(--line);font-size:11px;line-height:1.45}.scope.warn{background:var(--warnbg);border-color:#efdaa7}
 ul{padding-left:18px;margin:8px 0}li{margin:6px 0;line-height:1.45;font-size:12px}.source{font-size:10px;color:var(--muted);margin-top:2px}.empty{font-size:11px;color:var(--muted)}
 .statusRow{display:flex;gap:8px;flex-wrap:wrap;margin-top:12px}.statusPill{padding:7px 9px;border-radius:99px;background:#f0f3f5;color:#51616d;font-size:10px;font-weight:800}.statusPill.ok{background:var(--okbg);color:var(--ok)}.statusPill.warn{background:var(--warnbg);color:var(--warn)}
-.notice{padding:12px;border-radius:12px;background:var(--warnbg);color:#6f510f;font-size:11px;line-height:1.45}.error{text-align:center;padding:70px 20px}.footer{text-align:center;padding:24px;color:var(--muted);font-size:10px}
+.notice{padding:12px;border-radius:12px;background:var(--warnbg);color:#6f510f;font-size:11px;line-height:1.45}.tableWrap{overflow:auto;margin-top:10px}.compTable{width:100%;border-collapse:collapse;font-size:11px;min-width:680px}.compTable th,.compTable td{padding:9px 8px;border-bottom:1px solid var(--line);text-align:left;white-space:nowrap}.compTable th{font-size:9px;text-transform:uppercase;color:var(--muted)}.sectionNote{font-size:10px;color:var(--muted);line-height:1.45;margin-top:8px}.error{text-align:center;padding:70px 20px}.footer{text-align:center;padding:24px;color:var(--muted);font-size:10px}
 @media(max-width:760px){.grid,.cols{grid-template-columns:1fr 1fr}}@media(max-width:480px){.grid,.cols{grid-template-columns:1fr}}@media print{nav,.footer{display:none}body{background:#fff}.card{break-inside:avoid}}
 </style>
 </head>
@@ -25,14 +25,15 @@ ul{padding-left:18px;margin:8px 0}li{margin:6px 0;line-height:1.45;font-size:12p
 <script>
 const esc=s=>String(s??'').replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));
 const arr=v=>Array.isArray(v)?v:[];
-const txt=x=>typeof x==='string'?x:(x?.claim||x?.label||x?.title||x?.description||x?.detail||x?.issue||x?.work||'');
+const txt=x=>{if(typeof x==='string')return x;if(!x||typeof x!=='object')return'';if(x.claim||x.label||x.title||x.description||x.detail||x.issue||x.work||x.item)return x.claim||x.label||x.title||x.description||x.detail||x.issue||x.work||x.item;if(x.name)return x.name+(x.reason?' — '+x.reason:'');return''};
 const money=v=>v==null||v===''?'N/C':new Intl.NumberFormat('fr-FR',{style:'currency',currency:'EUR',maximumFractionDigits:0}).format(v);
 const list=(v,n=8,empty='Aucun élément significatif identifié.')=>arr(v).slice(0,n).length?`<ul>${arr(v).slice(0,n).map(x=>`<li>${esc(txt(x))}${x?.source?`<div class="source">${esc(x.source)}${x.page?' · p. '+esc(x.page):''}</div>`:''}</li>`).join('')}</ul>`:`<span class="empty">${esc(empty)}</span>`;
 const k=(l,v)=>`<div class="kpi"><span>${esc(l)}</span><b>${v}</b></div>`;
 const score=v=>v===null||v===undefined||v===''||!Number.isFinite(Number(v))?null:Math.max(0,Math.min(100,Math.round(Number(v))));
 const val=v=>v===null||v===undefined||v===''?'N/C':esc(v);
+const comparableTable=v=>{const rows=arr(v).filter(x=>x&&x.price).slice(0,6);if(!rows.length)return'<span class="empty">Aucune vente comparable suffisamment fiable.</span>';return '<div class="tableWrap"><table class="compTable"><thead><tr><th>Comparable</th><th>Date</th><th>Distance</th><th>Prix</th><th>Surface</th><th>€/m²</th></tr></thead><tbody>'+rows.map(x=>'<tr><td>'+esc(x.label||x.address||'Comparable')+'</td><td>'+esc(x.date||'—')+'</td><td>'+esc(x.distance_note||((x.distance_m!=null?x.distance_m+' m':'—')))+'</td><td>'+money(x.price)+'</td><td>'+(x.surface!=null?esc(x.surface)+' m²':'—')+'</td><td>'+(x.price_m2!=null?money(x.price_m2):'—')+'</td></tr>').join('')+'</tbody></table></div>'};
 function render(d){
-  const r=d.result||{},a=r.analysis||{},s=r.scores||{},meta=r.meta||{},p=a.property||{},m=a.market||{},c=a.copro_metrics||{},co=a.copro||{},w=a.works||{},bb=a.buyer_blocks||{},dw=bb.diagnostic_works||{},fc=bb.future_copro_costs||{},rb=bb.real_acquisition_budget||{},bc=bb.before_offer_checks||{},ex=a.executive_summary||{},n=a.negotiation||{},v=a.verdict||{},docs=a.documents||{};
+  const r=d.result||{},a=r.analysis||{},s=r.scores||{},meta=r.meta||{},p=a.property||{},m=a.market||{},c=a.copro_metrics||{},co=a.copro||{},w=a.works||{},bb=a.buyer_blocks||{},dw=bb.diagnostic_works||{},fc=bb.future_copro_costs||{},rb=bb.real_acquisition_budget||{},bc=bb.before_offer_checks||{},ex=a.executive_summary||{},n=a.negotiation||{},v=a.verdict||{},docs=a.documents||{},dvf=m.dvf_reference||{};
   const propertyGate=s.evidence_gate?.property;
   const coproGate=s.evidence_gate?.copro;
   const marketGate=s.evidence_gate?.market;
@@ -96,6 +97,9 @@ function render(d){
         ${k('Prix / m²',p.price_per_m2!=null?money(p.price_per_m2):'N/C')}
       </div>
       <p class="summary">${esc(m.analysis||m.positioning||'')}</p>
+      ${dvf.sample_count?`<div class="statusRow"><span class="statusPill">${esc(dvf.sample_count)} ventes analysées</span>${dvf.radius_m?`<span class="statusPill">Rayon env. ${esc(dvf.radius_m)} m</span>`:''}${dvf.median_price_m2?`<span class="statusPill">Médiane ${money(dvf.median_price_m2)}/m²</span>`:''}</div>`:''}
+      <h3>Ventes comparables retenues</h3>${comparableTable(m.comparables)}
+      ${n.recommended_strategy?`<h3>Lecture pour l’offre</h3><p class="summary">${esc(n.recommended_strategy)}</p>${list(n.arguments,6,'Aucun argument de négociation suffisamment documenté.')}`:''}
     </div>
 
     <div class="card"><h2>Copropriété & charges</h2>
@@ -106,7 +110,10 @@ function render(d){
         ${k('Fonds travaux',money(c.works_fund))}
       </div>
       <p class="summary">${esc(co.financial_analysis||'')}</p>
-      <div class="cols">
+      ${co.governance_analysis?`<h3>Gouvernance</h3><p class="summary">${esc(co.governance_analysis)}</p>`:''}
+      ${co.technical_analysis?`<h3>Situation technique</h3><p class="summary">${esc(co.technical_analysis)}</p>`:''}
+      <div class="cols"><div class="box"><h3>Éléments favorables</h3>${list(co.strengths,6,'Aucun élément favorable suffisamment documenté.')}</div><div class="box"><h3>Points à surveiller</h3>${list(co.weaknesses,6,'Aucun point critique documenté.')}</div></div>
+      <div class="cols" style="margin-top:12px">
         <div class="box"><h3>Travaux votés / à vérifier</h3>${list(w.voted,8,'Aucun travail voté exploitable identifié.')}</div>
         <div class="box"><h3>PPPT / travaux discutés</h3>${list([...arr(w.recommended_pppt),...arr(w.discussed)],8,'Aucun élément exploitable identifié.')}</div>
       </div>
@@ -115,7 +122,7 @@ function render(d){
 
     <div class="card"><h2>Diagnostics & exposition financière</h2>
       ${list(p.diagnostics,8,'Aucun diagnostic exploitable.') }
-      <p class="summary">${esc(dw.summary||'')}</p>
+      <p class="summary">${esc(dw.summary||'')}</p>${list(dw.items,10,'Aucun travail privatif chiffrable identifié.')}
       <div class="grid">
         ${k('Travaux privatifs bas',money(dw.total_budget_low))}
         ${k('Travaux privatifs haut',money(dw.total_budget_high))}
@@ -123,12 +130,17 @@ function render(d){
         ${k('Total à payer relevé',money(c.total_to_pay))}
       </div>
       <h3>Dépenses copropriété futures</h3><p class="summary">${esc(fc.summary||'')}</p>${list(fc.items,8,'Aucune dépense future chiffrable établie.')}
+      ${arr(fc.unknown_exposure).length?`<h3>Exposition encore inconnue</h3>${list(fc.unknown_exposure,8)}`:''}
+      <h3>Budget réel d’acquisition</h3><div class="grid">${k('Prix',money(rb.purchase_price))}${k('Frais d’acquisition',money(rb.acquisition_fees_estimate))}${k('Total connu bas',money(rb.known_total_low))}${k('Total connu haut',money(rb.known_total_high))}</div>
+      <p class="summary">${esc(rb.summary||'')}</p>${arr(rb.unknown_costs).length?`<h3>Coûts non chiffrés</h3>${list(rb.unknown_costs,8)}`:''}
     </div>
 
     <div class="card"><h2>À vérifier avant l’offre</h2>
       <p class="summary">${esc(bc.summary||'')}</p>
       ${list(bc.checks?.length?bc.checks:a.questions_before_offer,8)}
-      ${arr(bc.inconsistencies).length?`<h3>Incohérences à résoudre</h3>${list(bc.inconsistencies,6)}`:''}
+      ${arr(bc.inconsistencies).length?`<h3>Incohérences à résoudre</h3>${list(bc.inconsistencies,8)}`:''}
+      ${arr(bc.negotiation_impacts).length?`<h3>Éléments pouvant peser dans la négociation</h3>${list(bc.negotiation_impacts,8)}`:''}
+      ${arr(a.questions_before_offer).length?`<h3>Questions concrètes à poser</h3>${list(a.questions_before_offer,8)}`:''}
     </div>
 
     <div class="card"><h2>Documents & traçabilité</h2>
@@ -136,11 +148,14 @@ function render(d){
         <div class="box"><h3>Documents exploités</h3>${list(docs.received,30)}</div>
         <div class="box"><h3>Documents exclus / à obtenir</h3>${rejected.length?list(rejected,30):''}${list(docs.missing_or_to_obtain,10,'Aucun document complémentaire demandé.')}</div>
       </div>
-      ${arr(a.evidence).length?`<h3>Faits sourcés</h3>${list(a.evidence.filter(x=>x?.status==='FACT'),20,'Aucun fait n’a pu être qualifié de FACT avec une source explicite.')}`:''}
+      <h3>Documents ou informations à obtenir</h3>${list(docs.missing_or_to_obtain,12,'Aucun document complémentaire demandé.')}
+      ${arr(docs.quality_notes).length?`<h3>Qualité de lecture</h3>${list(docs.quality_notes,12)}`:''}
+      ${arr(a.evidence).length?`<h3>Faits sourcés</h3>${list(a.evidence.filter(x=>x?.status==='FACT'),24,'Aucun fait n’a pu être qualifié de FACT avec une source explicite.')}`:''}
     </div>
 
     <div class="card"><h2>Conclusion</h2>
       <p class="summary">${esc(v.why||v.summary||ex.overview||'')}</p>
+      <div class="cols"><div class="box"><h3>Conditions rassurantes</h3>${list(v.go_if,8,'Aucune condition supplémentaire formulée.')}</div><div class="box"><h3>Cas qui doivent faire reconsidérer l’offre</h3>${list(v.stop_if,8,'Aucun seuil d’arrêt formalisé.')}</div></div>
       <p class="source">ReVisite distingue les faits documentés, les informations à confirmer et les données indisponibles. Un champ N/C signifie « non calculé », pas « mauvais ».</p>
     </div>
   `;

@@ -95,8 +95,55 @@ export function prepareDocs(docs=[],options={}){
   });
 }
 
+function hasMeaningfulValue(v){
+  if(v===null||v===undefined||v==='')return false;
+  if(Array.isArray(v))return v.length>0;
+  if(typeof v==='object')return Object.keys(v).length>0;
+  return true;
+}
+function mergeRecovered(source,target){
+  if(Array.isArray(source)||Array.isArray(target)){
+    const out=[],seen=new Set();
+    for(const item of [...arr(target),...arr(source)]){
+      const key=typeof item==='string'?'s:'+item:'j:'+JSON.stringify(item);
+      if(seen.has(key))continue;seen.add(key);out.push(item);
+    }
+    return out;
+  }
+  if(source&&typeof source==='object'&&target&&typeof target==='object'){
+    const out={...source,...target};
+    for(const key of new Set([...Object.keys(source),...Object.keys(target)])){
+      const sv=source[key],tv=target[key];
+      out[key]=hasMeaningfulValue(tv)?mergeRecovered(sv,tv):sv;
+    }
+    return out;
+  }
+  return hasMeaningfulValue(target)?target:source;
+}
+export function repairAnalysisShape(input){
+  const a=obj(input),p=obj(a.property);
+  const misplacedObjectKeys=['market','copro_metrics','copro','works','buyer_blocks','documents','risk_flags','executive_summary','negotiation','verdict'];
+  const misplacedArrayKeys=['evidence','questions_before_offer'];
+  let repaired=false;
+  for(const key of misplacedObjectKeys){
+    if(p[key]&&typeof p[key]==='object'){
+      a[key]=mergeRecovered(p[key],a[key]);
+      delete p[key];repaired=true;
+    }
+  }
+  for(const key of misplacedArrayKeys){
+    if(Array.isArray(p[key])){
+      a[key]=mergeRecovered(p[key],a[key]);
+      delete p[key];repaired=true;
+    }
+  }
+  a.property=p;
+  if(repaired)a.__shape_repaired=true;
+  return a;
+}
+
 export function normalizeAnalysis(input){
-  const a=obj(input);
+  const a=repairAnalysisShape(input);
   a.property=obj(a.property);a.market=obj(a.market);a.copro_metrics=obj(a.copro_metrics);a.copro=obj(a.copro);a.works=obj(a.works);
   a.buyer_blocks=obj(a.buyer_blocks);a.documents=obj(a.documents);a.risk_flags=obj(a.risk_flags);a.executive_summary=obj(a.executive_summary);
   a.negotiation=obj(a.negotiation);a.verdict=obj(a.verdict);
@@ -139,6 +186,15 @@ export function normalizeAnalysis(input){
     return{...x,claim:claim||undefined,status,source:explicitSource||undefined};
   });
   for(const key of Object.keys(a.risk_flags))a.risk_flags[key]=a.risk_flags[key]===true;
+  const verifiedDpe=/^[A-G]$/i.test(text(a.property.dpe).trim())?text(a.property.dpe).trim().toUpperCase():null;
+  if(verifiedDpe){
+    const fixDpeText=v=>typeof v==='string'?v.replace(/\bDPE\s*[:\-]?\s*[A-G]\b/ig,'DPE '+verifiedDpe):v;
+    a.property.assets=a.property.assets.map(fixDpeText);
+    a.property.weaknesses=a.property.weaknesses.map(fixDpeText);
+    a.property.diagnostics=a.property.diagnostics.map(fixDpeText);
+    a.executive_summary.top_strengths=a.executive_summary.top_strengths.map(fixDpeText);
+    a.executive_summary.top_risks=a.executive_summary.top_risks.map(fixDpeText);
+  }
   return a;
 }
 
