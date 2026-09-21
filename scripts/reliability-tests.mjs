@@ -108,8 +108,8 @@ const guarded=applyDeterministicGuardrails({
     before_offer_checks:{checks:['Demander les PV d’AG 2023, 2025 et 2026'],inconsistencies:[],negotiation_impacts:[]}
   },
   documents:{missing_or_to_obtain:['PV d’AG 2023, 2025 et 2026'],received:[]},
-  executive_summary:{top_strengths:['Deux parkings'],top_risks:[]},
-  negotiation:{conditions_before_offer:['Recevoir les AG 2025 et 2026']},
+  executive_summary:{overview:'T3 avec terrasse et deux parkings.',top_strengths:['Deux parkings'],top_risks:[]},
+  negotiation:{conditions_before_offer:['Recevoir les AG 2025 et 2026','Confirmer les deux parkings et leurs lots']},
   questions_before_offer:['Quels sont les résultats des AG 2025 et 2026 ?'],
   risk_flags:{electrical_anomalies:false,copro_documents_incomplete:false}
 },{
@@ -127,6 +127,8 @@ assert.equal(guarded.risk_flags.electrical_anomalies,true,'Les anomalies électr
 assert.equal(guarded.risk_flags.copro_documents_incomplete,true,'Des AG/RCP rejetés doivent activer le drapeau de documentation copropriété incomplète');
 assert.ok(!guarded.documents.missing_or_to_obtain.join(' ').includes('2026'),'Une année d’AG absente des pièces ne doit pas être inventée');
 assert.ok(guarded.property.assets.some(x=>String(x).includes('à confirmer')),'Un stationnement confirmé par une seule source doit être présenté comme à confirmer');
+assert.ok(!guarded.executive_summary.overview.includes('deux parkings'),'Le résumé narratif ne doit pas conserver un nombre de parkings insuffisamment sourcé');
+assert.ok(!guarded.negotiation.conditions_before_offer.join(' ').includes('deux parkings'),'Les conditions avant offre doivent neutraliser un nombre de parkings insuffisamment sourcé');
 assert.ok(guarded.copro.technical_analysis.includes('à confirmer'),'Une année de construction portée par une seule source ne doit pas être affirmée sans réserve');
 
 const guardedParkingConflict=applyDeterministicGuardrails({
