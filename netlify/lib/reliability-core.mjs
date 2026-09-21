@@ -186,6 +186,15 @@ export function normalizeAnalysis(input){
     return{...x,claim:claim||undefined,status,source:explicitSource||undefined};
   });
   for(const key of Object.keys(a.risk_flags))a.risk_flags[key]=a.risk_flags[key]===true;
+  const verifiedDpe=/^[A-G]$/i.test(text(a.property.dpe).trim())?text(a.property.dpe).trim().toUpperCase():null;
+  if(verifiedDpe){
+    const fixDpeText=v=>typeof v==='string'?v.replace(/\bDPE\s*[:\-]?\s*[A-G]\b/ig,'DPE '+verifiedDpe):v;
+    a.property.assets=a.property.assets.map(fixDpeText);
+    a.property.weaknesses=a.property.weaknesses.map(fixDpeText);
+    a.property.diagnostics=a.property.diagnostics.map(fixDpeText);
+    a.executive_summary.top_strengths=a.executive_summary.top_strengths.map(fixDpeText);
+    a.executive_summary.top_risks=a.executive_summary.top_risks.map(fixDpeText);
+  }
   return a;
 }
 
