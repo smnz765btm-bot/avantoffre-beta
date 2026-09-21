@@ -20,7 +20,7 @@ jobs:
           npx playwright install --with-deps chromium
       - name: Validate live shared report
         run: |
-          cat > /tmp/check.mjs <<'JS'
+          cat > ./check.mjs <<'JS'
           import { chromium } from 'playwright';
           const browser=await chromium.launch({headless:true});
           const page=await browser.newPage();
@@ -39,4 +39,4 @@ jobs:
           console.log(text.slice(0,12000));
           await browser.close();
           JS
-          node /tmp/check.mjs
+          node ./check.mjs
