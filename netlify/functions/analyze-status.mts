@@ -13,10 +13,11 @@ export default async(req:Request,_context:Context)=>{
     if(!job)return json({status:"pending"});
     if(job.status==="done"){
       hardenScores(job.result);
-      const shareId=crypto.randomUUID().replace(/-/g,"").slice(0,24),expiresAt=expiresIn(1000*60*60*24*14);
+      const shareId=job.result?.meta?.share_id||crypto.randomUUID().replace(/-/g,"").slice(0,24),expiresAt=job.result?.meta?.share_expires_at||expiresIn(1000*60*60*24*14);
       await store.setJSON(`share-${shareId}`,{result:job.result,shared_at:new Date().toISOString(),expires_at:expiresAt});
       if(job.result)job.result.meta={...(job.result.meta||{}),share_id:shareId,share_url:`/share.html?id=${shareId}`,share_expires_at:expiresAt};
-      await Promise.allSettled([store.delete(`input-${jobId}`),store.delete(`input-meta-${jobId}`),store.delete(jobId)]);
+      await Promise.allSettled([store.delete(`input-${jobId}`),store.delete(`input-meta-${jobId}`)]);
+      await store.setJSON(jobId,{...job,expires_at:job.expires_at||expiresIn(1000*60*60*3)});
       return json(job);
     }
     if(job.status==="error"){
@@ -27,7 +28,7 @@ export default async(req:Request,_context:Context)=>{
         code==="INPUT_TOO_LARGE"?"Le dossier transmis est trop volumineux pour une seule analyse. ReVisite a déjà tenté une version compacte automatiquement.":
         code==="PROVIDER_TRANSIENT"?"Le moteur d'analyse a rencontré une indisponibilité temporaire malgré la tentative de secours automatique.":
         "L'analyse n'a pas pu être finalisée malgré la tentative de secours automatique.";
-      await Promise.allSettled([store.delete(`input-${jobId}`),store.delete(`input-meta-${jobId}`),store.delete(jobId)]);
+      await Promise.allSettled([store.delete(`input-${jobId}`),store.delete(`input-meta-${jobId}`)]);
       return json({status:"error",error,error_code:code},500);
     }
     return json(job);
