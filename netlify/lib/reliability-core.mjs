@@ -295,7 +295,16 @@ export function applyDeterministicGuardrails(analysis,{docs=[],documentIssues=[]
     const allParkingCounts=[...new Set([...parkingSources.flatMap(x=>x.counts),...extraParking])];
     const sameParkingSources=allParkingCounts.length===1?parkingSources.filter(x=>x.counts.includes(allParkingCounts[0])).length:0;
     const parkingConflict=allParkingCounts.length>1;
-    if(parkingConflict){
+    const parkingEvidence=arr(a.evidence).some(e=>parkingCountsFromText(String(e?.claim||'')).length>0&&String(e?.status||'')==='FACT');
+    if(allParkingCounts.length===0&&!extraParking.length&&!parkingEvidence){
+      const hasAssertedParking=[text(a.property.title),...a.property.assets,...a.executive_summary.top_strengths].some(x=>parkingCountsFromText(x).length>0);
+      if(hasAssertedParking){
+        a.property.assets=a.property.assets.map(x=>parkingCountsFromText(x).length?'Stationnement annoncé : nombre de places à confirmer dans les lots vendus.':x);
+        a.executive_summary.top_strengths=a.executive_summary.top_strengths.map(x=>parkingCountsFromText(x).length?'Stationnement annoncé : nombre de places à confirmer.':x);
+        a.property.title=text(a.property.title).replace(/\s+(?:avec|et)\s+(?:\d|un|une|deux|trois|quatre)\s+(?:places?\s+(?:de\s+)?stationnement|places?\s+de\s+parking|parkings?)/ig,' avec stationnement à confirmer');
+        uniqueTextPush(a.buyer_blocks.before_offer_checks.checks,'Confirmer le nombre et les numéros de lots de stationnement vendus.');
+      }
+    }else if(parkingConflict){
       uniqueTextPush(a.buyer_blocks.before_offer_checks.inconsistencies,`Nombre de stationnements à confirmer : des informations différentes apparaissent dans le dossier${extraParking.length?' et/ou dans les informations complémentaires':''}.`);
       a.property.assets=a.property.assets.map(x=>/\b(?:parkings?|stationnements?)\b/i.test(text(x))?'Stationnement : nombre de places à confirmer.':x);
       a.executive_summary.top_strengths=a.executive_summary.top_strengths.map(x=>/\b(?:parkings?|stationnements?)\b/i.test(text(x))?'Stationnement à confirmer dans les lots vendus.':x);
@@ -304,6 +313,7 @@ export function applyDeterministicGuardrails(analysis,{docs=[],documentIssues=[]
       const n=allParkingCounts[0];
       a.property.assets=a.property.assets.map(x=>/\b(?:parkings?|stationnements?)\b/i.test(text(x))?`Stationnement annoncé : ${n} place${n>1?'s':''}, à confirmer dans les lots vendus.`:x);
       a.executive_summary.top_strengths=a.executive_summary.top_strengths.map(x=>/\b(?:parkings?|stationnements?)\b/i.test(text(x))?`Stationnement annoncé : ${n} place${n>1?'s':''}, à confirmer.`:x);
+      a.property.title=text(a.property.title).replace(/\s+(?:avec|et)\s+(?:\d|un|une|deux|trois|quatre)\s+(?:places?\s+(?:de\s+)?stationnement|places?\s+de\s+parking|parkings?)/ig,' avec stationnement à confirmer');
       uniqueTextPush(a.buyer_blocks.before_offer_checks.checks,'Confirmer le nombre et les numéros de lots de stationnement vendus.');
     }
 
