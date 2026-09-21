@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import {documentCoverage,prepareDocs,normalizeAnalysis,extractDeterministicFacts,applyDeterministicFacts,parseStaticDvfCsv,selectOfficialComparables,applyOfficialMarketData,deterministicScores,hardenScores,num} from '../netlify/lib/reliability-core.mjs';
+import {documentCoverage,prepareDocs,normalizeAnalysis,extractDeterministicFacts,applyDeterministicFacts,applyDeterministicGuardrails,applyVerdictGuardrails,parseStaticDvfCsv,selectOfficialComparables,applyOfficialMarketData,deterministicScores,hardenScores,num} from '../netlify/lib/reliability-core.mjs';
 import {partitionUploadDocuments} from '../netlify/lib/upload-core.mjs';
 
 assert.equal(num(null),null,'Une valeur nulle doit rester inconnue et ne jamais devenir zéro');
@@ -92,6 +92,67 @@ const dpeConflict=normalizeAnalysis({
 assert.ok(dpeConflict.buyer_blocks.before_offer_checks.inconsistencies.some(x=>String(x).includes('DPE à clarifier')),'Une divergence DPE sourcée doit être signalée explicitement');
 assert.ok(dpeConflict.questions_before_offer.some(x=>String(x).includes('classe DPE')),'Une divergence DPE doit générer une question de vérification');
 assert.ok(dpeConflict.property.assets.includes('DPE B'),'Le résumé visuel doit rester cohérent avec la classe retenue');
+
+const guarded=applyDeterministicGuardrails({
+  property:{
+    title:'Appartement T3 avec deux parkings',
+    assets:['Deux parkings','Terrasse'],
+    weaknesses:['Installation électrique présentant plusieurs anomalies'],
+    diagnostics:['Protection différentielle défaillante'],
+    property_analysis:''
+  },
+  copro:{technical_analysis:'La résidence date de 2003.',weaknesses:['Documents de copropriété non exploitables']},
+  buyer_blocks:{
+    diagnostic_works:{summary:'Mise en sécurité électrique à chiffrer',items:[]},
+    future_copro_costs:{unknown_exposure:[]},
+    before_offer_checks:{checks:['Demander les PV d’AG 2023, 2025 et 2026'],inconsistencies:[],negotiation_impacts:[]}
+  },
+  documents:{missing_or_to_obtain:['PV d’AG 2023, 2025 et 2026'],received:[]},
+  executive_summary:{top_strengths:['Deux parkings'],top_risks:[]},
+  negotiation:{conditions_before_offer:['Recevoir les AG 2025 et 2026']},
+  questions_before_offer:['Quels sont les résultats des AG 2025 et 2026 ?'],
+  risk_flags:{electrical_anomalies:false,copro_documents_incomplete:false}
+},{
+  docs:[
+    {name:'ag24.pdf',text:'Assemblée générale 2024'},
+    {name:'Fiche commerciale.pdf',text:'Appartement avec deux parkings. Résidence construction en 2003.'}
+  ],
+  documentIssues:[
+    {name:'ag23.PDF',reason:'OCR insuffisant'},
+    {name:'ag25.pdf',reason:'OCR insuffisant'},
+    {name:'rcp.PDF',reason:'OCR insuffisant'}
+  ]
+});
+assert.equal(guarded.risk_flags.electrical_anomalies,true,'Les anomalies électriques documentées doivent activer le drapeau correspondant');
+assert.equal(guarded.risk_flags.copro_documents_incomplete,true,'Des AG/RCP rejetés doivent activer le drapeau de documentation copropriété incomplète');
+assert.ok(!guarded.documents.missing_or_to_obtain.join(' ').includes('2026'),'Une année d’AG absente des pièces ne doit pas être inventée');
+assert.ok(guarded.property.assets.some(x=>String(x).includes('à confirmer')),'Un stationnement confirmé par une seule source doit être présenté comme à confirmer');
+assert.ok(guarded.copro.technical_analysis.includes('à confirmer'),'Une année de construction portée par une seule source ne doit pas être affirmée sans réserve');
+
+const guardedParkingConflict=applyDeterministicGuardrails({
+  property:{title:'Appartement avec deux parkings',assets:['Deux parkings']},
+  buyer_blocks:{before_offer_checks:{checks:[],inconsistencies:[],negotiation_impacts:[]}},
+  executive_summary:{top_strengths:['Deux parkings']},
+  documents:{missing_or_to_obtain:[]},
+  negotiation:{conditions_before_offer:[]},
+  questions_before_offer:[]
+},{
+  docs:[
+    {name:'fiche.pdf',text:'Deux parkings privatifs.'},
+    {name:'etat.pdf',text:'Une place de stationnement.'}
+  ]
+});
+assert.ok(guardedParkingConflict.buyer_blocks.before_offer_checks.inconsistencies.some(x=>String(x).includes('stationnements')),'Deux nombres de stationnements contradictoires doivent être signalés');
+assert.ok(!guardedParkingConflict.property.assets.some(x=>String(x).includes('Deux parkings')),'Un nombre de parkings contradictoire ne doit pas rester un atout affirmé');
+
+const verdictGuarded=applyVerdictGuardrails({
+  verdict:{label:'Favorable sous vérifications',summary:'Prix cohérent.',vigilance:'faible'},
+  risk_flags:{copro_documents_incomplete:true}
+},{copro:null,evidence_gate:{copro:false}},[
+  {name:'ag25.pdf'},{name:'rcp.PDF'}
+]);
+assert.equal(verdictGuarded.verdict.label,'À approfondir avant offre','Un dossier sans base copropriété suffisante ne doit pas recevoir un verdict favorable');
+assert.equal(verdictGuarded.verdict.vigilance,'modérée');
 
 const sanitized=normalizeAnalysis({
  property:{weaknesses:['Balcon non inclus dans la surface Carrez','Infiltration constatée sur balcon']},
@@ -262,6 +323,13 @@ const readableGraphicalPlan=partitionUploadDocuments([{
 assert.equal(readableGraphicalPlan.accepted.length,1,'Un plan avec un peu de texte OCR réellement détecté doit rester exploitable comme référence graphique');
 assert.equal(readableGraphicalPlan.accepted[0].documentKind,'graphical');
 assert.equal(readableGraphicalPlan.accepted[0].quality,'partial');
+
+const recoveredPartialAg=partitionUploadDocuments([{
+  index:0,name:'ag25.pdf',text:'Procès-verbal AG 2025 : résolution travaux',quality:'partial',pages:8,weakPages:7,
+  documentKind:'text',extractedChars:43
+}]);
+assert.equal(recoveredPartialAg.accepted.length,1,'Un fragment OCR utile de 35 caractères ou plus doit rester exploitable en lecture partielle');
+assert.equal(recoveredPartialAg.accepted[0].quality,'partial');
 
 const unreadableGraphicalPlan=partitionUploadDocuments([{
   index:0,name:'PLAN_APT_B12.pdf',text:'x',quality:'failed',pages:1,weakPages:1,

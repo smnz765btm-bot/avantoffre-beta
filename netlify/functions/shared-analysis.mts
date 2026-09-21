@@ -1,6 +1,6 @@
 import type { Context, Config } from "@netlify/functions";
 import { jobStore, isExpired } from "../lib/storage.mjs";
-import { normalizeAnalysis } from "../lib/reliability-core.mjs";
+import { normalizeAnalysis, applyDeterministicGuardrails, applyVerdictGuardrails } from "../lib/reliability-core.mjs";
 
 const json=(body:any,status=200)=>new Response(JSON.stringify(body),{status,headers:{"Content-Type":"application/json; charset=utf-8","Cache-Control":"public, max-age=60"}});
 
@@ -19,6 +19,12 @@ export default async(req:Request,_context:Context)=>{
         delete shared.result.analysis.__shape_repaired;
         shared.result.meta={...(shared.result.meta||{}),shape_repaired_on_read:true};
       }
+      const received=Array.isArray(shared.result.analysis?.documents?.received)?shared.result.analysis.documents.received:[];
+      const rejected=Array.isArray(shared.result.analysis?.documents?.rejected)?shared.result.analysis.documents.rejected:[];
+      const docs=received.map((name:any)=>({name:String(name||"document"),text:""}));
+      const documentIssues=rejected.map((x:any)=>typeof x==="string"?{name:x,reason:"Document non exploitable"}:{name:String(x?.name||"document"),reason:String(x?.reason||"Document non exploitable")});
+      shared.result.analysis=applyDeterministicGuardrails(shared.result.analysis,{docs,documentIssues});
+      shared.result.analysis=applyVerdictGuardrails(shared.result.analysis,shared.result.scores||{},documentIssues);
     }
     return json(shared);
   }catch(err){console.error("ReVisite shared analysis error",err);return json({error:"Impossible de charger cette analyse."},500)}

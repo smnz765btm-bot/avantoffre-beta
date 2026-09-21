@@ -1,6 +1,6 @@
 import type { Context, Config } from "@netlify/functions";
 import { jobStore, expiresIn, isExpired } from "../lib/storage.mjs";
-import { prepareDocs, normalizeAnalysis, applyDeterministicFacts, parseStaticDvfCsv, applyOfficialMarketData, deterministicScores, hardenScores, num } from "../lib/reliability-core.mjs";
+import { prepareDocs, normalizeAnalysis, applyDeterministicFacts, applyDeterministicGuardrails, applyVerdictGuardrails, parseStaticDvfCsv, applyOfficialMarketData, deterministicScores, hardenScores, num } from "../lib/reliability-core.mjs";
 
 type Doc={name:string;text:string;pages?:number;chars?:number;quality?:string;ocrPages?:number;weakPages?:number;pageStats?:any[]};
 
@@ -195,6 +195,9 @@ RÈGLES DE FIABILITÉ
 - "RAS", "aucune procédure" ou "absence de procédure" ne sont jamais des litiges.
 - Un travail ancien déjà réalisé doit rester dans l'historique ; il ne doit pas être présenté comme dépense future.
 - Un PPPT/PPT voté signifie que l'étude/le plan a été décidé ; cela ne transforme pas automatiquement tous les travaux du plan en travaux votés.
+- Pour le nombre de parkings/stationnements, l'année de construction et les numéros de lots, n'affirme une valeur précise que si elle est explicitement présente dans une source identifiable. Si deux sources divergent, place le point dans "inconsistencies" et formule "à confirmer".
+- N'invente jamais une année de PV d'AG. Si une année n'apparaît pas dans les pièces reçues ou exclues, demande simplement "les derniers PV d'AG disponibles".
+- Une conclusion "Favorable", "Rassurante" ou équivalente est interdite lorsque la copropriété n'est pas suffisamment documentée ou que plusieurs pièces essentielles de copropriété sont illisibles.
 
 PRIX / MARCHÉ
 - Les lignes DVF+ fournies dans le message utilisateur proviennent du Cerema. Utilise-les comme source prioritaire pour les ventes enregistrées.
@@ -284,6 +287,7 @@ Retourne uniquement un objet JSON valide correspondant aux rubriques demandées.
       const notes=Array.isArray(analysis.documents.quality_notes)?analysis.documents.quality_notes:[];
       analysis.documents.quality_notes=[...notes,...documentIssues.map((x:any)=>`${x.name} — exclu de l'analyse : ${x.reason}`)].slice(0,12);
     }
+    analysis=applyDeterministicGuardrails(analysis,{docs,documentIssues,extra});
     if(dvf.status!=="ok"){
       analysis.market=analysis.market||{};
       analysis.market.estimate_low=null;analysis.market.estimate_high=null;analysis.market.offer_low=null;analysis.market.offer_high=null;
@@ -314,6 +318,7 @@ Retourne uniquement un objet JSON valide correspondant aux rubriques demandées.
     if(p.asking_price&&p.surface_m2&&!p.price_per_m2)p.price_per_m2=Math.round(Number(p.asking_price)/Number(p.surface_m2));
     const officialCount=Array.isArray(analysis?.market?.comparables)?analysis.market.comparables.filter((x:any)=>x?.type==="DVF").length:0;
     const scores=deterministicScores(analysis,docs,{officialCount});
+    analysis=applyVerdictGuardrails(analysis,scores,documentIssues);
     if(degradedMode){
       scores.property=null;scores.copro=null;scores.market=null;scores.overall=null;scores.confidence=Math.min(Number(scores.confidence)||0,35);
     }
