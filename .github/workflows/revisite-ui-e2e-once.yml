@@ -1,5 +1,6 @@
 name: ReVisite browser one-shot E2E
 # production verification after stability hardening
+# document-confidence UI verification
 
 on:
   push:
@@ -37,6 +38,10 @@ jobs:
               "Decompte de charges du lot.",
               "Total annuel : 1976,66 euros.",
               "Charges courantes de copropriete."
+            ]),
+            ("PLAN_APT_B12.pdf",[
+              "Plan appartement T3 surface 62,3 m2.",
+              "Sejour cuisine chambre chambre."
             ])
           ]
           for name,lines in docs:
@@ -60,8 +65,8 @@ jobs:
           });
           await page.goto('https://revisite-demo.netlify.app/?e2e=1',{waitUntil:'networkidle'});
           await page.locator('#address').fill('26 chemin de Borderouge 31200 Toulouse');
-          await page.locator('#files').setInputFiles(['/tmp/diagnostics.pdf','/tmp/charges.pdf']);
-          await page.waitForFunction(() => document.querySelectorAll('#filesList .file').length >= 2);
+          await page.locator('#files').setInputFiles(['/tmp/diagnostics.pdf','/tmp/charges.pdf','/tmp/PLAN_APT_B12.pdf']);
+          await page.waitForFunction(() => document.querySelectorAll('#filesList .file').length >= 3);
           await page.locator('#analyze').click();
           const report=page.locator('#report');
           await report.waitFor({state:'visible',timeout:240000});
@@ -70,6 +75,12 @@ jobs:
           console.log(text.slice(0,12000));
           console.log('REPORT_TEXT_END');
           if(!text.trim()) throw new Error('Rapport visible mais vide');
+          const graphicalCount=await page.locator('#filesList .ao-docstatus.graphical').count();
+          if(graphicalCount<1) throw new Error('Plan graphique non reconnu dans l interface');
+          const readSummary=((await page.locator('#aoReadWarning').count())?await page.locator('#aoReadWarning').innerText():'').toLowerCase();
+          console.log('READ_SUMMARY',readSummary);
+          if(!readSummary.includes('3 documents exploitables sur 3')) throw new Error('Résumé documentaire attendu absent');
+          if(!readSummary.includes('document graphique détecté')) throw new Error('Mention graphique attendue absente');
           console.log('FIRST ANALYSIS RENDERED');
           await page.locator('#analyze').click();
           await report.waitFor({state:'visible',timeout:120000});
