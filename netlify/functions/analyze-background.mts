@@ -275,11 +275,9 @@ Retourne uniquement un objet JSON valide correspondant aux rubriques demandées.
         if(!canRetry)break;
       }
     }
+    if([401,403].includes(Number(lastError?.status)))throw lastError;
     const degradedMode=Boolean(lastError||!parsed);
     let analysis=degradedMode?basicFallbackAnalysis(docs,address):normalizeAnalysis(parsed);
-    if(degradedMode&&new URL(req.url).hostname.startsWith('deploy-preview-')){
-      analysis.executive_summary.overview+=` [Diagnostic aperçu : ${Number(lastError?.status)||0} ${String(lastError?.message||'réponse vide').slice(0,320)}]`;
-    }
     analysis=applyDeterministicFacts(analysis,docs);
     if(address)analysis.property.address=address;
     analysis=applyOfficialMarketData(analysis,dvf.candidates||[]);
@@ -340,6 +338,7 @@ Retourne uniquement un objet JSON valide correspondant aux rubriques demandées.
     console.error("ReVisite background error",err);
     const message=String(err?.message||"");
     const error_code=
+      [401,403].includes(Number(err?.status))?"CONFIG":
       /REPORT_OUTPUT_LIMIT|Réponse IA non structurée|Aucun rapport exploitable/i.test(message)?"MODEL_OUTPUT":
       /429|rate limit|quota/i.test(message)?"PROVIDER_RATE":
       /context|too long|too large|request too large|413/i.test(message)?"INPUT_TOO_LARGE":

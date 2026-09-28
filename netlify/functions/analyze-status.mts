@@ -23,6 +23,7 @@ export default async(req:Request,_context:Context)=>{
     if(job.status==="error"){
       const code=String(job.error_code||"ENGINE");
       const error=
+        code==="CONFIG"?"Le moteur d’analyse est indisponible : sa clé d’accès doit être renouvelée par le responsable de ReVisite.":
         code==="MODEL_OUTPUT"?"Le rapport a été interrompu avant sa finalisation. Relancez l’analyse : les documents peuvent rester sélectionnés.":
         code==="PROVIDER_RATE"?"Le moteur d’analyse est momentanément saturé. Réessayez dans quelques minutes.":
         code==="INPUT_TOO_LARGE"?"Le dossier transmis est trop volumineux pour une seule analyse. ReVisite a déjà tenté une version compacte automatiquement.":
