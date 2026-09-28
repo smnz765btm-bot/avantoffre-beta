@@ -277,6 +277,9 @@ Retourne uniquement un objet JSON valide correspondant aux rubriques demandées.
     }
     const degradedMode=Boolean(lastError||!parsed);
     let analysis=degradedMode?basicFallbackAnalysis(docs,address):normalizeAnalysis(parsed);
+    if(degradedMode&&new URL(req.url).hostname.startsWith('deploy-preview-')){
+      analysis.executive_summary.overview+=` [Diagnostic aperçu : ${Number(lastError?.status)||0} ${String(lastError?.message||'réponse vide').slice(0,320)}]`;
+    }
     analysis=applyDeterministicFacts(analysis,docs);
     if(address)analysis.property.address=address;
     analysis=applyOfficialMarketData(analysis,dvf.candidates||[]);
