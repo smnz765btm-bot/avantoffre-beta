@@ -17,7 +17,7 @@ async function extractFile(f){
   for(let p=1;p<=pdf.numPages;p++){
     if(p===1||p%8===0||p===pdf.numPages)status(`Lecture PDF ${p}/${pdf.numPages} : ${f.name}`);
     const page=await pdf.getPage(p);let native='';try{const tc=await page.getTextContent();native=tc.items.map(x=>x.str).join(' ').trim()}catch{}
-    const chars=aoCleanLen(native);totalNative+=chars;pages.push({page,native,finalText:native,method:'native',chars});
+    const chars=aoCleanLen(native);totalNative+=chars;pages.push({page:p,native,finalText:native,method:'native',chars});
   }
   const weak=pages.filter(x=>x.chars<AO_MIN_NATIVE_PAGE_CHARS);
   const weakRatio=pdf.numPages?weak.length/pdf.numPages:1;
