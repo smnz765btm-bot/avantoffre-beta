@@ -418,6 +418,9 @@ export function extractDeterministicFacts(docs=[]){
   const explicitDpe=explicitClassMatch?String(explicitClassMatch[1]).toUpperCase():null;
   const dpePages=diag.split(/(?=\[PAGE\s+\d+)/i).filter(x=>/DPE|performance\s+[ée]nerg[ée]tique|co[uû]ts\s+annuels\s+d['’]?[ée]nergie|logement\s+extr[eê]mement\s+performant/i.test(x));
   const zones=dpePages.length?dpePages:[diag];
+  // The DPE can show both current and post-works values. The current state wins.
+  const current=zones.join('\n').match(/[ée]tat\s+actuel[\s\S]{0,130}?consommation\s*:\s*(\d{2,3})\s*kwh[\s\S]{0,100}?[ée]missions\s*:\s*(\d{1,3})\s*kg/i);
+  if(current){energy=Number(current[1]);ges=Number(current[2])}
   for(const zone of zones){
     if(energy!==null&&ges!==null)break;
     const unitPair=zone.match(/\b(\d{2,3})\s*(?:kwh|kw\s*h)[^\d]{0,80}(\d{1,3})\s*(?:kg\s*(?:co2|co₂)|kgco2)/i);
@@ -425,22 +428,30 @@ export function extractDeterministicFacts(docs=[]){
       const e=Number(unitPair[1]),g=Number(unitPair[2]);
       if(e>=20&&e<=700&&g>=0&&g<=150&&e>g*2){energy=e;ges=g;break}
     }
-    const perf=zone.match(/(?:performance\s+[ée]nerg[ée]tique(?:\s+et\s+climatique)?|consommation\s+[ée]nerg[ée]tique)([\s\S]{0,2600})/i);
-    const sample=perf?.[1]||zone;
-    const nums=[...sample.matchAll(/\b(\d{1,3})\b/g)].map(m=>Number(m[1])).filter(Number.isFinite);
-    const pairs=[];
-    for(let i=0;i<nums.length-1;i++){
-      const e=nums[i],g=nums[i+1];
-      if(e>=50&&e<=500&&g>=1&&g<=100&&e>g*3)pairs.push([e,g]);
+    const labelAt=zone.search(/performance\s+[ée]nerg[ée]tique\s+et\s+climatique/i);
+    if(labelAt>=0){
+      const labelWindow=zone.slice(labelAt,labelAt+650);
+      const ocrPair=labelWindow.match(/\b(\d{2,3})\s*[|/]\s*(\d{1,3})\b[^\d]{0,55}kwh[^\n]{0,80}kg\s*co/i);
+      if(ocrPair){
+        const e=Number(ocrPair[1]),g=Number(ocrPair[2]);
+        if(e>=20&&e<=700&&g>=0&&g<=150&&e>g*2){energy=e;ges=g;break}
+      }
     }
-    if(pairs.length){
-      pairs.sort((a,b)=>(b[0]/Math.max(1,b[1]))-(a[0]/Math.max(1,a[1])));
-      [energy,ges]=pairs[0];
+    // OCR may return only the two numbers on the DPE label. Accept them only
+    // immediately after the label, not arbitrary figures elsewhere in a 96-page diagnosis.
+    const labelPair=zone.match(/performance\s+[ée]nerg[ée]tique\s+et\s+climatique\s*[:–-]?\s*(\d{2,3})\s+(\d{1,3})\b/i);
+    if(labelPair){
+      const e=Number(labelPair[1]),g=Number(labelPair[2]);
+      if(e>=20&&e<=700&&g>=0&&g<=150&&e>g*2){energy=e;ges=g}
     }
   }
   const dpe=dpeClassFromValues(surface,energy,ges)||explicitDpe;
 
+  const statements=list.filter(d=>/r[ée]partition\s+des\s+charges|d[ée]compte\s+de\s+charges/i.test(text(d?.name)))
+    .sort((a,b)=>(Number(text(b?.name).match(/20\d{2}/)?.[0])||0)-(Number(text(a?.name).match(/20\d{2}/)?.[0])||0));
+  const latestStatement=statements[0]?text(statements[0].text):'';
   const annualCharges=
+    firstMatchNumber(latestStatement,/montant\s+total\s+des\s+d[ée]penses\s*:\s*(\d{1,3}(?:\s\d{3})*(?:[.,]\d{2}))\s*€/i) ??
     firstMatchNumber(charges,/total\s+des\s+charges\s+sur\s+cette\s+p[ée]riode[\s\S]{0,220}?(\d{3,6}(?:[.,]\d{2}))/i);
   const individualBalance=firstMatchNumber(charges,/solde\s+d[ée]biteur\s+(\d{1,6}(?:[.,]\d{2}))/i);
   const currentCall=firstMatchNumber(charges,/montant\s+de\s+l['’]?appel\s+de\s+fonds\s+(\d{1,6}(?:[.,]\d{2}))/i);
@@ -716,4 +727,3 @@ export function deterministicScores(a,docs=[],marketMeta={}){
     evidence_gate:{property:propertyEvidence,copro:coproEvidence,market:marketEvidence,finance_core_count:financeCoreCount,strong_ag:strongAg,strong_accounts:strongAccounts,official_count:officialCount,market_sample_count:marketSampleCount,dispersion_ratio:dispersionRatio}
   };
 }
-

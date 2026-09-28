@@ -220,6 +220,19 @@ const ocrFacts=extractDeterministicFacts(ocrLikeDpeDoc);
 assert.equal(ocrFacts.dpe,'B','Le DPE graphique OCRisé doit être recalculé B à partir de 106/3');
 assert.equal(ocrFacts.energy_consumption_kwh_m2,106);
 assert.equal(ocrFacts.ghg_kgco2_m2,3);
+const unlabelledDpeNumbers=extractDeterministicFacts([{name:'Diag.pdf',quality:'partial',text:'[PAGE 5 | NATIVE] Sommaire du dossier DPE 96 pages. Mesures plomb 109 2 et référence 520 6.'}]);
+assert.equal(unlabelledDpeNumbers.dpe,null,'Des chiffres sans unité ni étiquette DPE ne doivent jamais créer une classe énergétique');
+const montesquieuDpe=extractDeterministicFacts([{name:'Diag(1).pdf',quality:'partial',text:'[PAGE 6 | OCR] Performance énergétique et climatique logement extrêmement performant *Dont émissions de gaz à effet de serre consommation (énergie primaire) émissions 269| 10" kWh/mé/an | kg CO,/mé/an'}]);
+assert.equal(montesquieuDpe.energy_consumption_kwh_m2,269,'Les valeurs OCR de la page DPE doivent être reconnues malgré la mise en page');
+assert.equal(montesquieuDpe.ghg_kgco2_m2,10);
+const currentVsWorks=extractDeterministicFacts([{name:'Diag(1).pdf',quality:'partial',text:'Superficie Carrez : 73,90 m² [PAGE 11 | OCR] DPE Évolution de la performance après travaux avec travaux consommation: 168 kwh/m²/an émissions: 6 kg CO2/m²/an état actuel consommation: 269 kwh/m²/an émissions: 10 kg CO2/m²/an'}]);
+assert.equal(currentVsWorks.dpe,'E','Le DPE actuel doit primer sur la projection après travaux');
+assert.equal(currentVsWorks.energy_consumption_kwh_m2,269);
+const montesquieuCharges=extractDeterministicFacts([
+ {name:'Répartition des charges courantes - Exercice 2024.pdf',text:'Montant total des dépenses : 1 120,42 €',quality:'ok'},
+ {name:'Répartition des charges courantes - Exercice 2025.pdf',text:'Montant total des dépenses : 850,77 € Montant total des provisions appelées : 1 351,23 €',quality:'ok'}
+]);
+assert.equal(montesquieuCharges.lot_annual_charges,850.77,'Les dépenses du dernier exercice doivent primer sur les provisions et l’exercice précédent');
 const correctedDpe=applyDeterministicFacts({property:{surface_m2:83.44,rooms:4,dpe:'A'},copro_metrics:{}},ocrLikeDpeDoc);
 assert.equal(correctedDpe.property.dpe,'B','Un DPE IA erroné doit être écrasé par les valeurs OCR vérifiables');
 const unverifiedDpe=applyDeterministicFacts({property:{surface_m2:83.44,rooms:4,dpe:'A'},copro_metrics:{}},[
@@ -317,9 +330,12 @@ assert.equal(mixedUpload.rejected.length,1,'Le PDF illisible doit être signalé
 assert.equal(mixedUpload.accepted[0].name,'diagnostics.pdf');
 assert.equal(mixedUpload.rejected[0].name,'plan.pdf');
 assert.equal(mixedUpload.rejected[0].accepted,false);
+const blankPdf=partitionUploadDocuments([{index:0,name:'scan-vide.pdf',quality:'ok',pages:5,extractedChars:500,text:Array.from({length:5},(_,i)=>`[PAGE ${i+1} | NATIVE]`).join('\n')}]);
+assert.equal(blankPdf.accepted.length,0,'Les marqueurs de pages ne constituent pas du texte documentaire exploitable');
+assert.equal(blankPdf.rejected[0].quality,'failed');
 
 const readableGraphicalPlan=partitionUploadDocuments([{
-  index:0,name:'PLAN_APT_B12.pdf',text:'[DOCUMENT GRAPHIQUE] T3 62,3 m2',quality:'partial',pages:1,weakPages:1,
+  index:0,name:'PLAN_APT_B12.pdf',text:'[DOCUMENT GRAPHIQUE] Appartement T3, surface 62,3 m2',quality:'partial',pages:1,weakPages:1,
   documentKind:'graphical',extractedChars:24
 }]);
 assert.equal(readableGraphicalPlan.accepted.length,1,'Un plan avec un peu de texte OCR réellement détecté doit rester exploitable comme référence graphique');

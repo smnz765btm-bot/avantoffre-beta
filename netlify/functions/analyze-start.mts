@@ -75,7 +75,9 @@ export default async(req:Request,_context:Context)=>{
     const cached:any=await store.get(cacheKey,{type:"json"});
     if(cached?.result&&!isExpired(cached)){
       const result=structuredClone(cached.result);
-      result.meta={...(result.meta||{}),cache_hit:true,cache_reused_at:new Date().toISOString()};
+      const shareId=crypto.randomUUID().replace(/-/g,"").slice(0,24),shareExpiresAt=expiresIn(1000*60*60*24*14);
+      result.meta={...(result.meta||{}),cache_hit:true,cache_reused_at:new Date().toISOString(),share_id:shareId,share_url:`/share.html?id=${shareId}`,share_expires_at:shareExpiresAt};
+      await store.setJSON(`share-${shareId}`,{result,shared_at:new Date().toISOString(),expires_at:shareExpiresAt});
       await Promise.allSettled(documentRefs.map(ref=>store.delete(ref)));
       return json({jobId,status:"done",cache_hit:true,result},200);
     }
