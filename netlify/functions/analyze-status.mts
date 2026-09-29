@@ -1,5 +1,5 @@
 import type { Context, Config } from "@netlify/functions";
-import { jobStore, expiresIn } from "../lib/storage.mjs";
+import { jobStore, shareStore, expiresIn } from "../lib/storage.mjs";
 import { hardenScores } from "../lib/reliability-core.mjs";
 
 const json=(body:any,status=200)=>new Response(JSON.stringify(body),{status,headers:{"Content-Type":"application/json; charset=utf-8","Cache-Control":"no-store"}});
@@ -15,7 +15,7 @@ export default async(req:Request,_context:Context)=>{
       hardenScores(job.result);
       const shareId=job.result?.meta?.share_id||crypto.randomUUID().replace(/-/g,"").slice(0,24),expiresAt=job.result?.meta?.share_expires_at||expiresIn(1000*60*60*24*14);
       if(job.result)job.result.meta={...(job.result.meta||{}),share_id:shareId,share_url:`/share.html?id=${shareId}`,share_expires_at:expiresAt};
-      await store.setJSON(`share-${shareId}`,{result:job.result,shared_at:new Date().toISOString(),expires_at:expiresAt});
+      await shareStore().setJSON(`share-${shareId}`,{result:job.result,shared_at:new Date().toISOString(),expires_at:expiresAt});
       await Promise.allSettled([store.delete(`input-${jobId}`),store.delete(`input-meta-${jobId}`)]);
       await store.setJSON(jobId,{...job,expires_at:job.expires_at||expiresIn(1000*60*60*3)});
       return json(job);
