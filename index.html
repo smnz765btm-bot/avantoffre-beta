@@ -39,8 +39,8 @@ async function extractFile(f){
     }
   }
   // AG/PV et règlements scannés : OCR de toutes les pages faibles pour éviter
-  // de conclure à partir d'un simple échantillon. DPE : OCR ciblé de la page-étiquette.
-  const ocrBudget=Math.min(weak.length,isAg?weak.length:isLegalCopro?weak.length:isGraphical?Math.min(4,weak.length):(totalNative<5000||weakRatio>.35)?10:2);
+  // de conclure à partir d'un simple échantillon. Les diagnostics scannés doivent aussi être lus intégralement.
+  const ocrBudget=Math.min(weak.length,(isAg||isLegalCopro||isDiagnostic)?weak.length:isGraphical?Math.min(4,weak.length):(totalNative<5000||weakRatio>.35)?10:2);
   const ocrTargets=[];
   if(isAg&&weak.length<=ocrBudget)ocrTargets.push(...weak);
   else if(isGraphical)ocrTargets.push(...weak.slice(0,ocrBudget));

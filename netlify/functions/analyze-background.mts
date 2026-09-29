@@ -239,6 +239,7 @@ Retourne uniquement un objet JSON valide correspondant aux rubriques demandées.
     const buildUser=(preparedDocs:any[],compact=false)=>`ADRESSE DU BIEN:\n${address||"non fournie"}\n\nURL ANNONCE:\n${listingUrl||"non fournie"}\n\nINFORMATIONS COMPLÉMENTAIRES:\n${extra||"aucune"}\n\nDOCUMENTS NON EXPLOITABLES / EXCLUS DE L'ANALYSE:\n${documentIssues.length?documentIssues.map((x:any)=>`- ${x.name}: ${x.reason}`).join("\n"):"aucun"}\n\nVENTES DVF+ OFFICIELLES DU SECTEUR (CANDIDATS BRUTS À FILTRER SELON LE BIEN):\n${officialDvf}\n\nFAITS EXTRAITS DU DOSSIER COMPLET (prioritaires sur les extraits condensés ; null signifie non établi ; une surface de pièce ou de comparable ne remplace pas la surface totale):\n${jsonText(verifiedFacts)}\n\nSTRUCTURE JSON ATTENDUE:\n${jsonText(schemaHint)}\n\n${compact?"MODE DE SECOURS COMPACT : sois particulièrement concis et priorise les montants, décisions d’AG, diagnostics, charges, travaux et incohérences.\n\n":""}DOCUMENTS EXTRAITS:\n${preparedDocs.map((d:any,i:number)=>`\n--- DOCUMENT ${i+1}: ${d.name} | pages=${d.pages??"?"} | lecture=${d.quality||"non qualifiée"} | caractères transmis=${d.chars_transmitted}/${d.chars_source}${d.truncated?" | ÉCHANTILLONNÉ":""} ---\n${d.text}`).join("\n")}`;
 
     let data:any=null,parsed:any=null,totalUsage:any=null,modelAttempts=0,fallbackCompaction=false,lastError:any=null;
+    const attemptFailures:any[]=[];
     for(let attempt=1;attempt<=3;attempt++){
       modelAttempts=attempt;
       if(attempt===2){
@@ -262,7 +263,7 @@ Retourne uniquement un objet JSON valide correspondant aux rubriques demandées.
         totalUsage=mergeUsage(totalUsage,data?.usage);
         if(!rsp.ok){
           const msg=data?.error?.message||`HTTP ${rsp.status}`;
-          const e:any=new Error(msg);e.status=rsp.status;throw e;
+          const e:any=new Error(msg);e.status=rsp.status;e.code=data?.error?.code;e.param=data?.error?.param;throw e;
         }
         if(data?.status==="incomplete"&&data?.incomplete_details?.reason==="max_output_tokens")throw new Error("REPORT_OUTPUT_LIMIT");
         let outText=data?.output_text;
@@ -275,6 +276,7 @@ Retourne uniquement un objet JSON valide correspondant aux rubriques demandées.
         lastError=err;
         const msg=String(err?.message||"");
         const status=Number(err?.status)||0;
+        attemptFailures.push({attempt,status,code:err?.code||(/^(MODEL_TIMEOUT|REPORT_OUTPUT_LIMIT)$/.test(msg)?msg:"INVALID_MODEL_RESPONSE"),param:err?.param||null});
         const canRetry=attempt<3&&status!==401&&status!==403;
         if(!canRetry)break;
       }
@@ -330,7 +332,7 @@ Retourne uniquement un objet JSON valide correspondant aux rubriques demandées.
     const result={analysis,scores,meta:{
       model,document_count:docs.length,rejected_document_count:documentIssues.length,beta:true,generated_at:new Date().toISOString(),
       input_chars:preparedChars,dvf_status:dvf.status,dvf_source:dvf.source||null,dvf_candidate_count:Array.isArray(dvf.candidates)?dvf.candidates.length:0,
-      dvf_cache_hit:Boolean(dvf.cache_hit),usage:totalUsage||null,model_attempts:modelAttempts,fallback_compaction:fallbackCompaction,degraded_mode:degradedMode,score_withheld:scores.overall===null,cache_hit:false,
+      dvf_cache_hit:Boolean(dvf.cache_hit),usage:totalUsage||null,model_attempts:modelAttempts,attempt_failures:attemptFailures,fallback_compaction:fallbackCompaction,degraded_mode:degradedMode,score_withheld:scores.overall===null,cache_hit:false,
       document_quality:docs.map((d:any)=>({name:String(d?.name||"document"),quality:String(d?.quality||"unknown"),pages:Number(d?.pages)||null,weak_pages:Number(d?.weakPages)||0,ocr_pages:Number(d?.ocrPages)||0}))
     }};
     hardenScores(result);
