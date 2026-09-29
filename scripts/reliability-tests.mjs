@@ -380,3 +380,9 @@ assert.equal(graphicalDpe.dpe,'E','Les parasites graphiques ne masquent pas la p
 assert.equal(graphicalDpe.energy_consumption_kwh_m2,269,'La consommation primaire prévaut sur l’énergie finale');
 assert.equal(graphicalDpe.ghg_kgco2_m2,10);
 assert.equal(extractDeterministicFacts([{name:'diagnostic.pdf',text:'Le DPE a été établi. Classe énergétique : E.'}]).dpe,'E','Une préposition avant la vraie classe ne masque pas cette dernière');
+const noEnergyPraise=applyDeterministicFacts({property:{assets:['DPE individuel plutôt favorable','Garage']},executive_summary:{top_strengths:['DPE A']}},[{name:'diagnostic.pdf',text:'DPE a été établi, étiquette non lisible.'}]);
+assert.deepEqual(noEnergyPraise.property.assets,['Garage'],'Un DPE non établi ne devient pas un atout');
+assert.deepEqual(noEnergyPraise.executive_summary.top_strengths,[],'La synthèse ne vante pas un DPE non établi');
+const fadedUnits=extractDeterministicFacts([{name:'diag.pdf',text:'Surface Carrez : 82 m².\nPerformance énergétique et climatique\nà effet de serre\nconsommation\n269|10°|5 [ee]\nA CHEN\n141 KWh/m²/an émissions de CO,\n'}]);
+assert.equal(fadedUnits.dpe,'E','La paire située sous consommation dans l’étiquette reste exploitable si les unités sont effacées par l’OCR');
+assert.equal(fadedUnits.energy_consumption_kwh_m2,269);

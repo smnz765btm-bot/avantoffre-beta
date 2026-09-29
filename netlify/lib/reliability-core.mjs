@@ -440,7 +440,7 @@ export function extractDeterministicFacts(docs=[]){
     const labelAt=zone.search(/performance\s+[ée]nerg[ée]tique\s+et\s+climatique/i);
     if(labelAt>=0){
       const labelWindow=zone.slice(labelAt,labelAt+650);
-      const ocrPair=labelWindow.match(/\b(\d{2,3})\s*[|/]\s*(\d{1,3})\b[\s\S]{0,80}?kwh[^\n]{0,80}kg\s*co/i);
+      const ocrPair=labelWindow.match(/\b(\d{2,3})\s*[|/]\s*(\d{1,3})\b[\s\S]{0,80}?kwh[^\n]{0,80}kg\s*co/i)||labelWindow.match(/consommation\s*(\d{2,3})\s*[|/]\s*(\d{1,3})\b/i);
       if(ocrPair){
         const e=Number(ocrPair[1]),g=Number(ocrPair[2]);
         if(e>=20&&e<=700&&g>=0&&g<=150&&e>g*2){energy=e;ges=g;break}
@@ -481,6 +481,11 @@ export function applyDeterministicFacts(analysis,docs=[]){
   const hasDiagnosticDocs=Array.isArray(docs)&&docs.some(d=>{const s=docSignal(d);return s.categories.diagnostics||/DIA|diagnostic|DPE/i.test(text(d?.name))});
   if(f.dpe)a.property.dpe=f.dpe;
   else if(hasDiagnosticDocs)a.property.dpe=null;
+  if(hasDiagnosticDocs&&(!f.dpe||/[EFG]/.test(f.dpe))){
+    const energyPraise=x=>/\bDPE\b|performance[s]?\s+[ée]nerg[ée]tique/i.test(text(x));
+    a.property.assets=a.property.assets.filter(x=>!energyPraise(x));
+    a.executive_summary.top_strengths=a.executive_summary.top_strengths.filter(x=>!energyPraise(x));
+  }
   if(f.energy_consumption_kwh_m2!==null)a.property.energy_consumption_kwh_m2=f.energy_consumption_kwh_m2;
   else if(hasDiagnosticDocs)a.property.energy_consumption_kwh_m2=null;
   if(f.ghg_kgco2_m2!==null)a.property.ghg_kgco2_m2=f.ghg_kgco2_m2;
