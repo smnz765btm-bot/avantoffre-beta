@@ -380,7 +380,7 @@ export function applyVerdictGuardrails(analysis,scores,documentIssues=[]){
 }
 
 export function hardenScores(result){
-  if(result?.analysis&&result?.scores&&result.scores.version!==2)result.scores=explainScores(result);
+  if(result?.analysis&&result?.scores&&result.scores.revision!==3)result.scores=explainScores(result);
   const s=result?.scores;if(!s)return result;
   s.property=scoreNum(s.property);s.copro=scoreNum(s.copro);s.market=scoreNum(s.market);
   s.documentation=scoreNum(s.documentation);s.confidence=scoreNum(s.confidence);
@@ -469,6 +469,7 @@ export function extractDeterministicFacts(docs=[]){
   const totalToPay=firstMatchNumber(charges,/total\s+[àa]\s+payer\s+(\d{1,6}(?:[.,]\d{2}))/i);
 
   return{
+    dpe_date:zones.join(' ').match(/(?:[ée]tabli\s*le|[ée]tabli\s*le\s*:|date de r[ée]alisation)\s*:?\s*(\d{2}\/\d{2}\/20\d{2})/i)?.[1]||null,
     surface_m2:surface,rooms,floor,dpe,energy_consumption_kwh_m2:energy,ghg_kgco2_m2:ges,
     energy_cost_low:energyCostLow,energy_cost_high:energyCostHigh,lot_annual_charges:annualCharges,
     individual_balance:individualBalance,current_call_amount:currentCall,total_to_pay:totalToPay
@@ -481,6 +482,7 @@ export function applyDeterministicFacts(analysis,docs=[]){
   if(f.rooms!==null)a.property.rooms=f.rooms;
   if(f.floor)a.property.floor=f.floor;
   const hasDiagnosticDocs=Array.isArray(docs)&&docs.some(d=>{const s=docSignal(d);return s.categories.diagnostics||/DIA|diagnostic|DPE/i.test(text(d?.name))});
+  if(f.dpe_date)a.property.dpe_date=f.dpe_date;
   if(f.dpe)a.property.dpe=f.dpe;
   else if(hasDiagnosticDocs)a.property.dpe=null;
   if(hasDiagnosticDocs&&(!f.dpe||/[EFG]/.test(f.dpe))){
@@ -761,11 +763,20 @@ export function explainScores(result){
   const factor=(label,points)=>({label,points});
   const tally=items=>Math.max(0,100+items.reduce((n,x)=>n+x.points,0));
   const propertyFactors=[];const dpe=text(a.property?.dpe).toUpperCase();
-  const energyPenalty={D:5,E:12,F:22,G:30}[dpe]||0;
+  const energyPenalty={D:2,E:5,F:15,G:25}[dpe]||0;
   if(energyPenalty)propertyFactors.push(factor('Performance énergétique : DPE '+dpe,-energyPenalty));
-  if(r.electrical_anomalies)propertyFactors.push(factor('Anomalies électriques documentées',-15));
+  const safetyText=[...arr(a.property?.diagnostics),...arr(a.property?.weaknesses)].map(x=>text(x)).join(' ');
+  const electricDanger=/contacts? directs?|conducteurs? non protégés|risque d[’\x27]électrocution/i.test(safetyText);
+  if(r.electrical_anomalies)propertyFactors.push(factor(electricDanger?'Anomalies électriques avec danger explicitement décrit — mise en sécurité à chiffrer':'Anomalies électriques documentées — gravité et coût à préciser',electricDanger?-10:-5));
   const diagnosis=arr(a.property?.diagnostics).map(x=>text(x)||text(x?.description)).join(' ');
-  if(diagnosis.split(/[.;]/).some(part=>/plomb.{0,130}dégrad|revêtements?.{0,80}dégrad.{0,80}plomb/i.test(part)&&!/absence de plomb|pas de plomb|non[ -]dégrad|sans.{0,30}dégrad/i.test(part)))propertyFactors.push(factor('Revêtement au plomb dégradé documenté (périmètre à vérifier)',-10));
+  const leadParts=diagnosis.split(/[.;]/).filter(part=>/plomb.{0,130}dégrad|revêtements?.{0,80}dégrad.{0,80}plomb/i.test(part)&&!/absence de plomb|pas de plomb|non[ -]dégrad|sans.{0,30}dégrad/i.test(part));
+  const garageOnly=leadParts.length>0&&leadParts.every(part=>/garage/i.test(part)&&!/chambre|séjour|cuisine|salon/i.test(part));
+  const leadOutsideScope=garageOnly&&a.property?.garage_extra===true;
+  if(leadParts.length&&!leadOutsideScope)propertyFactors.push(factor(garageOnly?'Plomb dégradé localisé au garage — traitement à prévoir':'Plomb dégradé documenté — localisation et traitement à préciser',garageOnly?-3:-8));
+  const notes=[];
+  if(leadOutsideScope)notes.push('Plomb dégradé au garage : alerte conservée, sans retrait sur l’appartement car le garage est proposé en supplément. Réévaluer si le garage est inclus dans votre achat.');
+  if(a.property?.dpe_date)notes.push('DPE établi le '+a.property.dpe_date+'. La réforme du coefficient électrique est entrée en vigueur le 01/01/2026 : aucun second abaissement automatique. Une autre étiquette nécessite un diagnostic ou une attestation vérifiable.');
+
   if(r.major_property_defect)propertyFactors.push(factor('Défaut majeur du bien documenté',-25));
   const property=g.property===true?tally(propertyFactors):null;
   const cm=obj(a.copro_metrics),ar=num(cm.collective_arrears_ratio_pct),sr=num(cm.supplier_debt_ratio_pct);
@@ -793,15 +804,17 @@ export function explainScores(result){
   let copro=weight?Math.round(known.reduce((n,x)=>n+x.value*x.weight,0)/weight):null;
   const capped=Boolean(r.recurring_major_technical_issue&&rejected);
   if(copro!==null&&capped)copro=Math.min(64,copro);
-  const market=g.market===true?num(old.market):null;
-  return {...old,version:2,property,copro,market,overall:null,
+  const ask=num(a.property?.asking_price),lo=num(a.market?.estimate_low),hi=num(a.market?.estimate_high),ref=obj(a.market?.dvf_reference);
+  const marketReady=ask>0&&lo>0&&hi>=lo&&Math.max(Number(g.official_count)||0,Number(ref.sample_count)||0)>=8&&text(a.market?.confidence)!=='faible'&&(num(ref.dispersion_ratio)===null||num(ref.dispersion_ratio)<=1.8);
+  const market=marketReady?(ask<=hi?(ask<lo?88:84):Math.max(35,Math.round(84-((ask-hi)/hi*100)*2.5))):null;
+  return {...old,version:2,revision:3,property,copro,market,overall:null,
     copro_status:partial?'partial':known.length===3?'complete':'unknown',
     evidence_gate:{...g,property:property!==null,copro:copro!==null,copro_complete:known.length===3,market:market!==null},
     axes:Object.fromEntries(dimensions.map(x=>[x.key,x.value])),
     explanation:{method:'Indice de vigilance indicatif : base 100, puis retraits pour les risques identifiés. Ce barème bêta ne mesure ni la valeur du bien ni une probabilité de sinistre.',
-      property:{base:100,value:property,factors:propertyFactors,missing:'Surface, typologie, DPE et conclusions de diagnostics nécessaires.'},
+      property:{base:100,value:property,factors:propertyFactors,notes,missing:'Surface, typologie, DPE et conclusions de diagnostics nécessaires.'},
       copro:{value:copro,partial,coverage_weight:weight,dimensions,capped,confidence:partial?'Limitée : finances ou autres axes incomplets.':known.length===3?'Étendue aux trois axes, selon les pièces reçues.':'Insuffisante pour évaluer la copropriété.'},
-      market:{value:market,reason:num(a.property?.asking_price)===null?'Prix demandé manquant : renseignez-le pour évaluer son positionnement.':market===null?'Références DVF insuffisantes ou trop dispersées.':'Positionnement du prix demandé face à la fourchette DVF vérifiée ; ce score ne mesure pas la qualité technique.'},
+      market:{value:market,asking_price:num(a.property?.asking_price),scope:a.property?.price_scope||'',reason:num(a.property?.asking_price)===null?'Prix demandé manquant : renseignez-le pour évaluer son positionnement.':market===null?'Références DVF insuffisantes ou trop dispersées.':'Positionnement du prix demandé face à la fourchette DVF vérifiée ; ce score ne mesure pas la qualité technique.'},
       overall:'L’avis repose sur les risques et les vérifications à mener. Aucune moyenne globale ne masque une information manquante.'}
   };
 }

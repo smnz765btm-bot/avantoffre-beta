@@ -393,7 +393,7 @@ assert.match(marketStrategy(200000,250000,220000),/se situe/);
 
 const partialInput={analysis:{property:{dpe:'E',diagnostics:['Plomb dégradé dans le garage'],asking_price:null},risk_flags:{electrical_anomalies:true,voted_major_works:false,recurring_major_technical_issue:false,litigation:false,governance_issue:false,poor_maintenance:false},works:{rejected_or_postponed:['Réfection de la toiture rejetée']},copro_metrics:{}},scores:{documentation:95,evidence_gate:{property:true,strong_ag:true,finance_core_count:0,market:false}}};
 const partialV2=explainScores(partialInput);
-assert.equal(partialV2.property,63,'Chaque retrait explique exactement la note du bien');
+assert.equal(partialV2.property,87,'Chaque retrait explique exactement la note du bien');
 assert.equal(partialV2.copro_status,'partial');
 assert.equal(partialV2.axes.finance,null,'Une finance inconnue n’est ni zéro ni une pénalité');
 assert.equal(partialV2.axes.works,80);
@@ -403,4 +403,20 @@ assert.equal(partialV2.market,null,'Pas de score prix sans prix demandé');
 const rescue=hardenScores({...partialInput,meta:{degraded_mode:true}});
 assert.equal(rescue.scores.property,null);assert.equal(rescue.scores.explanation,null,'Le mode de secours ne réintroduit pas de score via les explications');
 
-const nonDegraded=structuredClone(partialInput);nonDegraded.analysis.property.diagnostics=['Plomb présent dans un revêtement non dégradé'];assert.equal(explainScores(nonDegraded).property,73,'Le plomb non dégradé ne reçoit pas la pénalité du plomb dégradé');
+const nonDegraded=structuredClone(partialInput);nonDegraded.analysis.property.diagnostics=['Plomb présent dans un revêtement non dégradé'];assert.equal(explainScores(nonDegraded).property,90,'Le plomb non dégradé ne reçoit pas la pénalité du plomb dégradé');
+
+const scopeTest=structuredClone(partialInput);scopeTest.analysis.property.garage_extra=true;assert.equal(explainScores(scopeTest).property,90,'Le garage hors prix ne pénalise pas le logement');
+const dangerTest=structuredClone(scopeTest);dangerTest.analysis.property.weaknesses=['Conducteurs non protégés'];assert.equal(explainScores(dangerTest).property,85,'Un danger électrique explicite conserve une retenue supérieure');
+const dpeDate=extractDeterministicFacts([{name:'diagnostic.pdf',text:'DPE établi le : 22/06/2026. Classe énergétique : E.'}]);assert.equal(dpeDate.dpe_date,'22/06/2026');assert.equal(dpeDate.dpe,'E','Pas de double recalcul en 2026');
+
+const {bieniciId,parseBienici,fetchListing,applyListing}=await import('../netlify/lib/listing.mjs');
+const listingURL='https://www.bienici.com/annonce/vente/toulouse/appartement/3pieces/example-123';
+assert.equal(bieniciId('https://www.bienici.com.evil.test/annonce/vente/x/example-123'),null);
+assert.equal(bieniciId('http://127.0.0.1/annonce/vente/x/example-123'),null);
+assert.equal(parseBienici({id:'wrong',price:349000,adType:'buy'},'example-123',listingURL),null);
+assert.equal(parseBienici({id:'example-123',price:349000,adType:'rent'},'example-123',listingURL),null);
+const listingOK=await fetchListing(listingURL,async()=>Response.json({id:'example-123',adType:'buy',price:349000,description:'Un garage de 23 m² complète le bien (proposé en Sus).'}));
+assert.equal(listingOK.asking_price,349000);assert.equal(listingOK.garage_extra,true);
+assert.equal((await fetchListing(listingURL,async()=>{throw Error('unavailable')})).status,'unavailable');
+const priceInput=structuredClone(scopeTest);applyListing(priceInput.analysis,listingOK);priceInput.analysis.market={estimate_low:240000,estimate_high:321000,confidence:'moyenne',dvf_reference:{sample_count:53,dispersion_ratio:1.69}};
+assert.equal(explainScores(priceInput).market,62,'Un prix vérifié réactive le positionnement face aux références existantes');
