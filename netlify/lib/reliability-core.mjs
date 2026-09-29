@@ -423,7 +423,7 @@ export function extractDeterministicFacts(docs=[]){
   const energyCostHigh=energyCostMatch?frNumber(energyCostMatch[2]):null;
 
   let energy=null,ges=null;
-  const explicitClassMatch=diag.match(/(?:\bDPE\b|classe\s+[ée]nerg[ée]tique|[ée]tiquette\s+[ée]nergie)\s*(?:classe)?\s*[:=–-]?\s*([A-G])\b/i);
+  const explicitClassMatch=[...diag.matchAll(/(?:\bDPE\b|classe\s+[ée]nerg[ée]tique|[ée]tiquette\s+[ée]nergie)\s*(?:classe)?\s*[:=–-]?\s*([A-G])\b/gi)].find(m=>m[1]===m[1].toUpperCase());
   const explicitDpe=explicitClassMatch&&explicitClassMatch[1]===explicitClassMatch[1].toUpperCase()?explicitClassMatch[1]:null;
   const dpePages=diag.split(/(?=\[PAGE\s+\d+)/i).filter(x=>/DPE|performance\s+[ée]nerg[ée]tique|co[uû]ts\s+annuels\s+d['’]?[ée]nergie|logement\s+extr[eê]mement\s+performant/i.test(x));
   const zones=dpePages.length?dpePages:[diag];

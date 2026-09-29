@@ -379,3 +379,4 @@ const graphicalDpe=extractDeterministicFacts([{name:'diag.pdf',text:'[PAGE 6 | O
 assert.equal(graphicalDpe.dpe,'E','Les parasites graphiques ne masquent pas la paire énergétique de l’étiquette');
 assert.equal(graphicalDpe.energy_consumption_kwh_m2,269,'La consommation primaire prévaut sur l’énergie finale');
 assert.equal(graphicalDpe.ghg_kgco2_m2,10);
+assert.equal(extractDeterministicFacts([{name:'diagnostic.pdf',text:'Le DPE a été établi. Classe énergétique : E.'}]).dpe,'E','Une préposition avant la vraie classe ne masque pas cette dernière');
