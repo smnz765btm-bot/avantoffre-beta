@@ -64,7 +64,7 @@ function balancedExcerpt(raw,maxChars){
   if(pages.length>1){
     const header='[EXTRACTION ÉCHANTILLONNÉE SUR TOUT LE DOCUMENT — certaines portions longues ont été condensées]\n';
     const budget=Math.max(1000,maxChars-header.length);
-    const per=Math.max(450,Math.floor(budget/pages.length));
+    const per=Math.max(80,Math.floor(budget/pages.length));
     const selected=pages.map(p=>p.length<=per?p:p.slice(0,Math.floor(per*.72))+'\n[…portion condensée…]\n'+p.slice(-Math.floor(per*.28)));
     let joined=header+selected.join('\n');
     if(joined.length>maxChars)joined=joined.slice(0,maxChars);
@@ -79,12 +79,14 @@ export function prepareDocs(docs=[],options={}){
   // Keep the model input comfortably bounded even on 20–30 document dossiers.
   // 360k characters is intentionally conservative and a compact fallback can go lower.
   const MAX_TOTAL=Math.max(90000,Number(options?.maxTotal)||360000);
-  const MAX_DOC=Math.max(12000,Number(options?.maxDoc)||50000);
+  const MAX_DOC=Math.max(12000,Number(options?.maxDoc)||180000);
   const list=Array.isArray(docs)?docs.slice(0,30):[];
   if(!list.length)return[];
-  const fairCap=Math.max(3000,Math.floor(MAX_TOTAL/list.length));
-  const cap=Math.min(MAX_DOC,fairCap);
-  return list.map(d=>{
+  const requested=list.map(d=>Math.min(MAX_DOC,text(d?.text).length));
+  const requestedTotal=requested.reduce((a,b)=>a+b,0);
+  const caps=requested.map(n=>requestedTotal>MAX_TOTAL?Math.floor(n*MAX_TOTAL/requestedTotal):n);
+  return list.map((d,i)=>{
+    const cap=caps[i];
     const raw=text(d?.text);
     const prepared=balancedExcerpt(raw,cap);
     return{
@@ -680,7 +682,8 @@ export function deterministicScores(a,docs=[],marketMeta={}){
   let works=25;if(r.voted_major_works)works-=10;if(r.pppt_significant_medium_term)works-=6;if(r.recurring_major_technical_issue)works-=5;if(r.recent_major_works_completed)works+=2;works=clamp(works,0,25);
   let governance=20;if(r.litigation)governance-=5;if(r.governance_issue)governance-=6;if(r.asl_active)governance-=2;governance=clamp(governance,0,20);
   let technical=15;if(r.poor_maintenance)technical-=6;if(r.recurring_major_technical_issue)technical-=4;if(r.recent_major_works_completed)technical+=2;technical=clamp(technical,0,15);
-  const copro=Math.round(finance+works+governance+technical);
+  const unresolvedMajorIssue=r.recurring_major_technical_issue&&arr(a?.works?.rejected_or_postponed).length>0;
+  const copro=Math.min(unresolvedMajorIssue?64:100,Math.round(finance+works+governance+technical));
 
   let market=55;const ask=num(a?.property?.asking_price),lo=num(a?.market?.estimate_low),hi=num(a?.market?.estimate_high);
   if(ask&&lo&&hi&&lo<=hi){if(ask>=lo&&ask<=hi)market=84;else if(ask<lo)market=88;else market=clamp(Math.round(84-((ask-hi)/hi*100)*2.5),35,84)}
@@ -704,7 +707,8 @@ export function deterministicScores(a,docs=[],marketMeta={}){
   const financeCoreCount=["annual_budget","collective_arrears","supplier_debt","cash","works_fund"].filter(k=>num(coproMetrics?.[k])!==null).length;
   // A charge statement or a document merely classified as "accounts" is not enough:
   // at least two core collective financial metrics must actually be extracted.
-  const coproEvidence=strongAg&&financeCoreCount>=2;
+  const risksAssessed=['voted_major_works','recurring_major_technical_issue','litigation','governance_issue','poor_maintenance'].every(k=>typeof r[k]==='boolean');
+  const coproEvidence=strongAg&&financeCoreCount>=2&&risksAssessed;
   const dvfRef=obj(a?.market?.dvf_reference);
   const marketSampleCount=Math.max(officialCount,Number(dvfRef.sample_count)||0);
   const dispersionRatio=num(dvfRef.dispersion_ratio);

@@ -1,6 +1,6 @@
 import type { Context, Config } from "@netlify/functions";
 import { jobStore, expiresIn, isExpired } from "../lib/storage.mjs";
-import { prepareDocs, normalizeAnalysis, applyDeterministicFacts, applyDeterministicGuardrails, applyVerdictGuardrails, parseStaticDvfCsv, applyOfficialMarketData, deterministicScores, hardenScores, num } from "../lib/reliability-core.mjs";
+import { prepareDocs, extractDeterministicFacts, normalizeAnalysis, applyDeterministicFacts, applyDeterministicGuardrails, applyVerdictGuardrails, parseStaticDvfCsv, applyOfficialMarketData, deterministicScores, hardenScores, num } from "../lib/reliability-core.mjs";
 
 type Doc={name:string;text:string;pages?:number;chars?:number;quality?:string;ocrPages?:number;weakPages?:number;pageStats?:any[]};
 
@@ -51,7 +51,7 @@ function basicFallbackAnalysis(docs:Doc[],address:string){
     works:{voted:[],discussed:[],recommended_pppt:[],analysis:"Les décisions de travaux ne sont pas déduites sans lecture structurée complète."},
     buyer_blocks:{diagnostic_works:{summary:"Non chiffré en mode de secours.",items:[],total_budget_low:null,total_budget_high:null},future_copro_costs:{summary:"Non chiffré en mode de secours.",items:[]},real_acquisition_budget:{purchase_price:null,acquisition_fees_estimate:null,private_works_low:null,private_works_high:null,known_total_low:null,known_total_high:null,summary:"Budget total non calculé en mode de secours."},before_offer_checks:{summary:"Relire les pièces signalées comme partielles avant offre.",checks:partial.slice(0,4),inconsistencies:[]}},
     documents:{received,missing_or_to_obtain:[],quality_notes:partial.map(n=>n+" — lecture partielle")},
-    risk_flags:{},
+    risk_flags:{electrical_anomalies:false,major_property_defect:false,no_elevator_high_floor:false,poor_dpe:false,sold_occupied:false,no_parking_when_expected:false,strong_property_assets:false,voted_major_works:false,pppt_significant_medium_term:false,recurring_major_technical_issue:false,recent_major_works_completed:false,litigation:false,governance_issue:false,asl_active:false,poor_maintenance:false},
     executive_summary:{headline:"Analyse sécurisée en mode de secours",overview:"Le rapport complet n’a pas pu être généré automatiquement. ReVisite affiche uniquement les données directement reconnues et ne produit aucun score global artificiel.",top_strengths:propertyEvidence,top_risks:partial.length?[String(partial.length)+" document(s) à lecture partielle"]:[],what_changes_the_decision:[]},
     negotiation:{recommended_strategy:"Ne pas fonder une offre sur le seul mode de secours.",arguments:[],conditions_before_offer:[]},
     evidence:[],questions_before_offer:[],
@@ -177,6 +177,7 @@ export default async(req:Request,_context:Context)=>{
     const documentIssues=Array.isArray(body?.documentIssues)?body.documentIssues.slice(0,30).map((x:any)=>({name:String(x?.name||"document").slice(0,240),reason:String(x?.reason||"Non exploitable").slice(0,300)})):[];
     if(!listingUrl&&!address&&docs.length===0)throw new Error("Ajoutez au moins une annonce, une adresse ou un document.");
 
+    const verifiedFacts=extractDeterministicFacts(docs);
     let prepared=prepareDocs(docs),preparedChars=prepared.reduce((s:number,d:any)=>s+(Number(d.chars_transmitted)||0),0);
     const dvf:any=await fetchDvfCandidates(address,store);
     const officialDvf=dvf.status==="ok"?dvfPromptRows(dvf.candidates):"Aucune donnée DVF+ officielle n'a pu être récupérée automatiquement pour cette analyse.";
@@ -187,6 +188,9 @@ RÈGLES DE FIABILITÉ
 - Distingue FACT, INFERENCE et UNKNOWN. Une donnée absente n'est jamais zéro et n'est jamais un risque avéré.
 - Un solde vendeur n'est pas un impayé collectif. Un projet ou PPPT n'est pas un travail voté. Une discussion en AG n'est pas une décision.
 - N'invente jamais un prix, une vente, une surface, un montant de charges, une obligation légale, une décision d'AG ou une quote-part.
+- Les caractéristiques des ventes DVF ne décrivent JAMAIS le bien analysé. Ne reprends aucune surface ou prix DVF comme caractéristique du bien.
+- Les faits extraits du dossier complet fournis avant les extraits condensés doivent être utilisés dans TOUTES les rubriques, y compris les phrases de synthèse.
+- Un tableau de classification (plomb, amiante, électricité) n’est pas un résultat positif : lis la conclusion du rapport.
 - Chaque fait important issu d'un document doit indiquer le fichier et la page lorsque le marqueur [PAGE N] est disponible.
 - Un document partiellement extrait réduit la confiance mais ne constitue pas un défaut du bien.
 - Une pièce rejetée/illisible doit être signalée comme limite documentaire, jamais transformée en défaut du bien.
@@ -226,13 +230,13 @@ Retourne uniquement un objet JSON valide correspondant aux rubriques demandées.
       copro:{financial_analysis:"",governance_analysis:"",technical_analysis:"",recurring_topics:[],litigation:[],strengths:[],weaknesses:[]},
       works:{voted:[],discussed:[],rejected_or_postponed:[],recommended_pppt:[],recent_completed:[],asl:[],analysis:""},
       buyer_blocks:{diagnostic_works:{summary:"",items:[],total_budget_low:null,total_budget_high:null,budget_note:""},future_copro_costs:{summary:"",items:[],lot_exposure_low:null,lot_exposure_high:null,unknown_exposure:[]},real_acquisition_budget:{purchase_price:null,acquisition_fees_estimate:null,private_works_low:null,private_works_high:null,voted_copro_share:null,known_total_low:null,known_total_high:null,unknown_costs:[],summary:""},before_offer_checks:{summary:"",checks:[],inconsistencies:[],negotiation_impacts:[]}},
-      documents:{received:[],rejected:[],missing_or_to_obtain:[],quality_notes:[],analysis:""},risk_flags:{},
+      documents:{received:[],rejected:[],missing_or_to_obtain:[],quality_notes:[],analysis:""},risk_flags:{electrical_anomalies:false,major_property_defect:false,no_elevator_high_floor:false,poor_dpe:false,sold_occupied:false,no_parking_when_expected:false,strong_property_assets:false,voted_major_works:false,pppt_significant_medium_term:false,recurring_major_technical_issue:false,recent_major_works_completed:false,litigation:false,governance_issue:false,asl_active:false,poor_maintenance:false},
       executive_summary:{headline:"",overview:"",top_strengths:[],top_risks:[],financial_exposure:"",what_changes_the_decision:[]},
       negotiation:{recommended_strategy:"",arguments:[],conditions_before_offer:[],offer_comment:""},
       evidence:[{claim:"",status:"FACT|INFERENCE|UNKNOWN",source:"",page:null}],questions_before_offer:[],verdict:{label:"",summary:"",vigilance:"faible|modérée|forte",why:"",go_if:[],stop_if:[]}
     };
 
-    const buildUser=(preparedDocs:any[],compact=false)=>`ADRESSE DU BIEN:\n${address||"non fournie"}\n\nURL ANNONCE:\n${listingUrl||"non fournie"}\n\nINFORMATIONS COMPLÉMENTAIRES:\n${extra||"aucune"}\n\nDOCUMENTS NON EXPLOITABLES / EXCLUS DE L'ANALYSE:\n${documentIssues.length?documentIssues.map((x:any)=>`- ${x.name}: ${x.reason}`).join("\n"):"aucun"}\n\nVENTES DVF+ OFFICIELLES DU SECTEUR (CANDIDATS BRUTS À FILTRER SELON LE BIEN):\n${officialDvf}\n\nSTRUCTURE JSON ATTENDUE:\n${jsonText(schemaHint)}\n\n${compact?"MODE DE SECOURS COMPACT : sois particulièrement concis et priorise les montants, décisions d’AG, diagnostics, charges, travaux et incohérences.\n\n":""}DOCUMENTS EXTRAITS:\n${preparedDocs.map((d:any,i:number)=>`\n--- DOCUMENT ${i+1}: ${d.name} | pages=${d.pages??"?"} | lecture=${d.quality||"non qualifiée"} | caractères transmis=${d.chars_transmitted}/${d.chars_source}${d.truncated?" | ÉCHANTILLONNÉ":""} ---\n${d.text}`).join("\n")}`;
+    const buildUser=(preparedDocs:any[],compact=false)=>`ADRESSE DU BIEN:\n${address||"non fournie"}\n\nURL ANNONCE:\n${listingUrl||"non fournie"}\n\nINFORMATIONS COMPLÉMENTAIRES:\n${extra||"aucune"}\n\nDOCUMENTS NON EXPLOITABLES / EXCLUS DE L'ANALYSE:\n${documentIssues.length?documentIssues.map((x:any)=>`- ${x.name}: ${x.reason}`).join("\n"):"aucun"}\n\nVENTES DVF+ OFFICIELLES DU SECTEUR (CANDIDATS BRUTS À FILTRER SELON LE BIEN):\n${officialDvf}\n\nFAITS EXTRAITS DU DOSSIER COMPLET (prioritaires sur les extraits condensés ; null signifie non établi ; une surface de pièce ou de comparable ne remplace pas la surface totale):\n${jsonText(verifiedFacts)}\n\nSTRUCTURE JSON ATTENDUE:\n${jsonText(schemaHint)}\n\n${compact?"MODE DE SECOURS COMPACT : sois particulièrement concis et priorise les montants, décisions d’AG, diagnostics, charges, travaux et incohérences.\n\n":""}DOCUMENTS EXTRAITS:\n${preparedDocs.map((d:any,i:number)=>`\n--- DOCUMENT ${i+1}: ${d.name} | pages=${d.pages??"?"} | lecture=${d.quality||"non qualifiée"} | caractères transmis=${d.chars_transmitted}/${d.chars_source}${d.truncated?" | ÉCHANTILLONNÉ":""} ---\n${d.text}`).join("\n")}`;
 
     let data:any=null,parsed:any=null,totalUsage:any=null,modelAttempts=0,fallbackCompaction=false,lastError:any=null;
     for(let attempt=1;attempt<=3;attempt++){
@@ -250,7 +254,7 @@ Retourne uniquement un objet JSON valide correspondant aux rubriques demandées.
       const payload:any={
         model,input:[{role:"system",content:[{type:"input_text",text:system}]},{role:"user",content:[{type:"input_text",text:user}]}],
         tools:attempt===1&&listingUrl?[{type:"web_search"}]:[],reasoning:{effort:"low"},max_output_tokens:attempt===1?12000:attempt===2?8000:6000,
-        text:{format:{type:"json_object"},verbosity:"low"},store:false,prompt_cache_key:"revisite-analysis-v5"
+        text:{...(attempt===1&&listingUrl?{}:{format:{type:"json_object"}}),verbosity:"low"},store:false,prompt_cache_key:"revisite-analysis-v5"
       };
       try{
         const rsp=await fetchWithTimeout("https://api.openai.com/v1/responses",{method:"POST",headers:{Authorization:`Bearer ${apiKey}`,"Content-Type":"application/json"},body:JSON.stringify(payload)});

@@ -23,7 +23,7 @@ const fakeDocs=[
 const cov=documentCoverage(fakeDocs);
 assert.ok(cov.score>=50,'Un dossier immobilier correctement documenté doit pouvoir franchir le seuil de couverture');
 const scored=deterministicScores({
- risk_flags:{},
+ risk_flags:{voted_major_works:false,recurring_major_technical_issue:false,litigation:false,governance_issue:false,poor_maintenance:false},
  copro_metrics:{annual_budget:140000,collective_arrears:5000,cash:45000,works_fund:30000},
  property:{asking_price:200000,surface_m2:82,rooms:4,dpe:'C',diagnostics:['Électricité conforme au rapport','DPE C']},
  market:{estimate_low:190000,estimate_high:210000,confidence:'bonne',dvf_reference:{sample_count:20,dispersion_ratio:1.3}}
@@ -360,3 +360,10 @@ console.log('ReVisite reliability tests: OK');
 
 const compact=prepareDocs(many,{maxTotal:180000,maxDoc:30000});
 assert.ok(compact.reduce((s,d)=>s+d.chars_transmitted,0)<=180000,'Le mode compact doit réduire fortement le contexte');
+
+const unassessed=deterministicScores({risk_flags:{},copro_metrics:{annual_budget:10000,cash:2000}},fakeDocs);
+assert.equal(unassessed.copro,null,'Une absence de drapeaux techniques ne signifie pas une copropriété rassurante');
+const unresolved=deterministicScores({risk_flags:{voted_major_works:false,recurring_major_technical_issue:true,litigation:false,governance_issue:false,poor_maintenance:true},works:{rejected_or_postponed:['Toiture rejetée malgré infiltrations']},copro_metrics:{annual_budget:10000,cash:2000}},fakeDocs);
+assert.ok(unresolved.copro<=64,'Des désordres majeurs non résolus doivent rester en vigilance');
+const longAndShort=prepareDocs([{name:'diagnostic.pdf',text:'D'.repeat(100000)},{name:'appel.pdf',text:'C'.repeat(1000)}]);
+assert.equal(longAndShort[0].text.length,100000,'Le budget inutilisé des pièces courtes doit conserver le diagnostic intégral');
