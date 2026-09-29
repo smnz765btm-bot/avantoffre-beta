@@ -420,3 +420,17 @@ assert.equal(listingOK.asking_price,349000);assert.equal(listingOK.garage_extra,
 assert.equal((await fetchListing(listingURL,async()=>{throw Error('unavailable')})).status,'unavailable');
 const priceInput=structuredClone(scopeTest);applyListing(priceInput.analysis,listingOK);priceInput.analysis.market={estimate_low:240000,estimate_high:321000,confidence:'moyenne',dvf_reference:{sample_count:53,dispersion_ratio:1.69}};
 assert.equal(explainScores(priceInput).market,62,'Un prix vérifié réactive le positionnement face aux références existantes');
+
+const {readingPlan}=await import('../pdf-reading-policy.mjs');
+const scan74=Array.from({length:74},(_,i)=>({page:i+1,chars:0,native:''}));
+assert.equal(readingPlan('DDT_COMPLET_GESTION_CANTAGREL.pdf',scan74).targets.length,74,'Toutes les pages du DDT scanné sont traitées');
+assert.equal(readingPlan('fichier.pdf',scan74).targets.length,74,'Un nom générique ne limite jamais l’OCR');
+assert.equal(readingPlan('plan.pdf',scan74).targets.length,74,'Même les plans ne perdent pas leurs pages');
+const {prepareCompleteDocuments}=await import('../netlify/lib/document-passes.mjs');
+const longText='A'.repeat(60000)+'B'.repeat(60000)+'C'.repeat(60000)+'DERNIER FAIT IMPORTANT';const seen=[];
+const allPasses=await prepareCompleteDocuments([{name:'long.pdf',text:longText}],async p=>{seen.push(p.text);return 'Faits de la partie '+p.part});
+assert.equal(seen.join(''),longText,'Les passes couvrent exactement tout le texte sans trou');assert.equal(allPasses.coverage[0].processed_chars,longText.length);
+await assert.rejects(()=>prepareCompleteDocuments([{name:'long.pdf',text:longText}],async()=>''),/DOCUMENT_PASS_FAILED/,'Une lecture intermédiaire vide ne doit pas être masquée');
+await import('../report-summary.js');
+const summaryHTML=globalThis.rvReportHTML({analysis:{property:{address:'<img onerror=alert(1)>',dpe:'F'},documents:{},risk_flags:{}},meta:{document_quality:[{name:'DDT.pdf',quality:'partial',pages:74,weak_pages:64}]},scores:{}});
+assert.ok(summaryHTML.includes('Diagnostic à relire'));assert.ok(!summaryHTML.includes('<img'));assert.ok(!summaryHTML.includes('Fiabilité documentaire'));assert.ok(summaryHTML.includes('<details'));

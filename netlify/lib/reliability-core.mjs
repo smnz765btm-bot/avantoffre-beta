@@ -95,7 +95,7 @@ export function prepareDocs(docs=[],options={}){
   return list.map((d,i)=>{
     const cap=caps[i];
     const raw=text(d?.text);
-    const prepared=balancedExcerpt(raw,cap,/diag|dpe/i.test(text(d?.name))||/diagnostic de performance|constat de risque d.exposition au plomb/i.test(raw));
+    const prepared=balancedExcerpt(raw,cap,/diag|ddt|dpe/i.test(text(d?.name))||/diagnostic de performance|constat de risque d.exposition au plomb/i.test(raw));
     return{
       name:text(d?.name)||'document',text:prepared,pages:num(d?.pages),quality:text(d?.quality)||undefined,
       weakPages:num(d?.weakPages),ocrPages:num(d?.ocrPages),chars_source:raw.length,chars_transmitted:prepared.length,
