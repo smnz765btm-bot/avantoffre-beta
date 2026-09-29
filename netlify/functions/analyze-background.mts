@@ -197,7 +197,7 @@ RÈGLES DE FIABILITÉ
 - Les caractéristiques neutres (balcon hors Carrez, étage, absence d'une donnée) ne deviennent pas des risques sans impact concret démontré.
 - Ne qualifie jamais des charges de "élevées", "faibles" ou "excessives" sans comparaison chiffrée explicite.
 - "RAS", "aucune procédure" ou "absence de procédure" ne sont jamais des litiges.
-- Un travail ancien déjà réalisé doit rester dans l'historique ; il ne doit pas être présenté comme dépense future.
+- Un travail ancien déjà réalisé doit rester dans l'historique ; il ne doit pas être présenté comme dépense future. Un simple vote ne prouve pas la réalisation : n'ajoute rien dans recent_completed sans preuve d'exécution.
 - Un PPPT/PPT voté signifie que l'étude/le plan a été décidé ; cela ne transforme pas automatiquement tous les travaux du plan en travaux votés.
 - Pour le nombre de parkings/stationnements, l'année de construction et les numéros de lots, n'affirme une valeur précise que si elle est explicitement présente dans une source identifiable. Si deux sources divergent, place le point dans "inconsistencies" et formule "à confirmer".
 - N'invente jamais une année de PV d'AG. Si une année n'apparaît pas dans les pièces reçues ou exclues, demande simplement "les derniers PV d'AG disponibles".
@@ -243,11 +243,11 @@ Retourne uniquement un objet JSON valide correspondant aux rubriques demandées.
     for(let attempt=1;attempt<=3;attempt++){
       modelAttempts=attempt;
       if(attempt===2){
-        prepared=prepareDocs(docs,{maxTotal:180000,maxDoc:30000});
+        prepared=prepareDocs(docs,{maxTotal:280000,maxDoc:160000});
         preparedChars=prepared.reduce((s:number,d:any)=>s+(Number(d.chars_transmitted)||0),0);
         fallbackCompaction=true;
       }else if(attempt===3){
-        prepared=prepareDocs(docs,{maxTotal:100000,maxDoc:18000});
+        prepared=prepareDocs(docs,{maxTotal:180000,maxDoc:100000});
         preparedChars=prepared.reduce((s:number,d:any)=>s+(Number(d.chars_transmitted)||0),0);
         fallbackCompaction=true;
       }

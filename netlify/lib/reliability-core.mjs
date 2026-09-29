@@ -58,14 +58,21 @@ function splitPages(raw){
   return out;
 }
 
-function balancedExcerpt(raw,maxChars){
+function balancedExcerpt(raw,maxChars,diagnostic=false){
   if(raw.length<=maxChars)return raw;
   const pages=splitPages(raw);
   if(pages.length>1){
     const header='[EXTRACTION ÉCHANTILLONNÉE SUR TOUT LE DOCUMENT — certaines portions longues ont été condensées]\n';
     const budget=Math.max(1000,maxChars-header.length);
-    const per=Math.max(80,Math.floor(budget/pages.length));
-    const selected=pages.map(p=>p.length<=per?p:p.slice(0,Math.floor(per*.72))+'\n[…portion condensée…]\n'+p.slice(-Math.floor(per*.28)));
+    // Preserve complete conclusion/result pages before distributing the rest.
+    // Page headers and footers alone are insufficient evidence for diagnostics.
+    const keep=new Set();let used=0;
+    if(diagnostic){
+      const important=pages.map((p,i)=>({i,p,score:(/conclusion|synth[èe]se/i.test(p)?3:0)+(/comprenant des peintures|points\s+[àa]\s+examiner|r[ée]sultats?\s+des\s+mesures/i.test(p)?3:0)})).filter(x=>x.score>0).sort((a,b)=>b.score-a.score||a.i-b.i);
+      for(const x of important){if(used+x.p.length<=budget*.65){keep.add(x.i);used+=x.p.length}}
+    }
+    const per=Math.max(40,Math.floor((budget-used-pages.length*25)/Math.max(1,pages.length-keep.size)));
+    const selected=pages.map((p,i)=>keep.has(i)||p.length<=per?p:p.slice(0,Math.floor(per*.72))+'\n[…portion condensée…]\n'+p.slice(-Math.floor(per*.28)));
     let joined=header+selected.join('\n');
     if(joined.length>maxChars)joined=joined.slice(0,maxChars);
     return joined;
@@ -88,7 +95,7 @@ export function prepareDocs(docs=[],options={}){
   return list.map((d,i)=>{
     const cap=caps[i];
     const raw=text(d?.text);
-    const prepared=balancedExcerpt(raw,cap);
+    const prepared=balancedExcerpt(raw,cap,/diag|dpe/i.test(text(d?.name))||/diagnostic de performance|constat de risque d.exposition au plomb/i.test(raw));
     return{
       name:text(d?.name)||'document',text:prepared,pages:num(d?.pages),quality:text(d?.quality)||undefined,
       weakPages:num(d?.weakPages),ocrPages:num(d?.ocrPages),chars_source:raw.length,chars_transmitted:prepared.length,
@@ -417,7 +424,7 @@ export function extractDeterministicFacts(docs=[]){
 
   let energy=null,ges=null;
   const explicitClassMatch=diag.match(/(?:\bDPE\b|classe\s+[ée]nerg[ée]tique|[ée]tiquette\s+[ée]nergie)\s*(?:classe)?\s*[:=–-]?\s*([A-G])\b/i);
-  const explicitDpe=explicitClassMatch?String(explicitClassMatch[1]).toUpperCase():null;
+  const explicitDpe=explicitClassMatch&&explicitClassMatch[1]===explicitClassMatch[1].toUpperCase()?explicitClassMatch[1]:null;
   const dpePages=diag.split(/(?=\[PAGE\s+\d+)/i).filter(x=>/DPE|performance\s+[ée]nerg[ée]tique|co[uû]ts\s+annuels\s+d['’]?[ée]nergie|logement\s+extr[eê]mement\s+performant/i.test(x));
   const zones=dpePages.length?dpePages:[diag];
   // The DPE can show both current and post-works values. The current state wins.
@@ -433,7 +440,7 @@ export function extractDeterministicFacts(docs=[]){
     const labelAt=zone.search(/performance\s+[ée]nerg[ée]tique\s+et\s+climatique/i);
     if(labelAt>=0){
       const labelWindow=zone.slice(labelAt,labelAt+650);
-      const ocrPair=labelWindow.match(/\b(\d{2,3})\s*[|/]\s*(\d{1,3})\b[^\d]{0,55}kwh[^\n]{0,80}kg\s*co/i);
+      const ocrPair=labelWindow.match(/\b(\d{2,3})\s*[|/]\s*(\d{1,3})\b[\s\S]{0,80}?kwh[^\n]{0,80}kg\s*co/i);
       if(ocrPair){
         const e=Number(ocrPair[1]),g=Number(ocrPair[2]);
         if(e>=20&&e<=700&&g>=0&&g<=150&&e>g*2){energy=e;ges=g;break}

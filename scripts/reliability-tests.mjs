@@ -367,3 +367,15 @@ const unresolved=deterministicScores({risk_flags:{voted_major_works:false,recurr
 assert.ok(unresolved.copro<=64,'Des désordres majeurs non résolus doivent rester en vigilance');
 const longAndShort=prepareDocs([{name:'diagnostic.pdf',text:'D'.repeat(100000)},{name:'appel.pdf',text:'C'.repeat(1000)}]);
 assert.equal(longAndShort[0].text.length,100000,'Le budget inutilisé des pièces courtes doit conserver le diagnostic intégral');
+
+const diagnosticPages=Array.from({length:96},(_,i)=>`[PAGE ${i+1} | TEXT]\n`+'En-tête et méthodologie. '.repeat(50)+(i===35?'Conclusion du constat : présence de plomb dans un revêtement dégradé. ':i===37?'Comprenant des peintures au plomb dégradées : garage. ':i===51?'Points à examiner : DDR ne déclenche pas à son seuil. ':'Méthodologie générale. ')+'Texte de fin et référence. '.repeat(50)).join('\n');
+const compactDiagnostic=prepareDocs([{name:'diagnostics.pdf',text:diagnosticPages}],{maxTotal:180000,maxDoc:30000})[0];
+assert.ok(compactDiagnostic.text.includes('présence de plomb dans un revêtement dégradé'),'La condensation conserve la conclusion située au milieu de la page');
+assert.ok(compactDiagnostic.text.includes('peintures au plomb dégradées : garage'),'La localisation du défaut reste transmise');
+assert.ok(compactDiagnostic.text.includes('DDR ne déclenche pas à son seuil'),'Les anomalies électriques restent transmises');
+assert.ok(compactDiagnostic.chars_transmitted<=30000,'Les pages prioritaires respectent le budget');
+assert.equal(extractDeterministicFacts([{name:'diagnostic.pdf',text:'Le DPE a été établi le 22 juin. Surface Carrez : 73,90 m².'}]).dpe,null,'La préposition a ne doit jamais devenir une classe DPE A');
+const graphicalDpe=extractDeterministicFacts([{name:'diag.pdf',text:'[PAGE 6 | OCR]\nSurface Carrez : 82 m².\nPerformance énergétique et climatique\nconsommation\n269|10°|5 3\nkWh/m?/an | kg CO,/m?/an\n141 kWh/m?/an énergie finale.\n[PAGE 11 | OCR]\nDPE Évolution après travaux : état actuel consommation: 200 twhte emissions: 10 kg CO2/m²/an'}]);
+assert.equal(graphicalDpe.dpe,'E','Les parasites graphiques ne masquent pas la paire énergétique de l’étiquette');
+assert.equal(graphicalDpe.energy_consumption_kwh_m2,269,'La consommation primaire prévaut sur l’énergie finale');
+assert.equal(graphicalDpe.ghg_kgco2_m2,10);
