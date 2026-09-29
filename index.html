@@ -59,6 +59,11 @@ async function extractFile(f){
   let text=parts.join('\n');
   if(isGraphical&&quality!=='failed')text='[DOCUMENT GRAPHIQUE — seuls les textes réellement détectés sont exploitables ; ne pas déduire de dimensions ou de géométrie absentes.]\n'+text;
   if(text.length>480000)text=text.slice(0,480000)+'\n[CONTENU TRONQUÉ À 480000 CARACTÈRES — document très long]';
+  if(new URLSearchParams(location.search).has('lecture')){
+    const details=document.createElement('details'),summary=document.createElement('summary'),pre=document.createElement('pre');
+    summary.textContent='Texte lu — '+f.name;pre.textContent=text;pre.style.cssText='white-space:pre-wrap;max-height:350px;overflow:auto;font-size:11px';
+    details.append(summary,pre);$('#filesList').after(details);
+  }
   return{name:f.name,text,pages:pdf.numPages,quality,ocrPages,weakPages,documentKind:isGraphical?'graphical':'text',extractedChars}
 }
 async function uploadDocs(jobId){
