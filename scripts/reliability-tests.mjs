@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import {documentCoverage,prepareDocs,normalizeAnalysis,extractDeterministicFacts,applyDeterministicFacts,applyDeterministicGuardrails,applyVerdictGuardrails,parseStaticDvfCsv,selectOfficialComparables,applyOfficialMarketData,deterministicScores,hardenScores,num} from '../netlify/lib/reliability-core.mjs';
+import {documentCoverage,marketStrategy,prepareDocs,normalizeAnalysis,extractDeterministicFacts,applyDeterministicFacts,applyDeterministicGuardrails,applyVerdictGuardrails,parseStaticDvfCsv,selectOfficialComparables,applyOfficialMarketData,deterministicScores,hardenScores,num} from '../netlify/lib/reliability-core.mjs';
 import {partitionUploadDocuments} from '../netlify/lib/upload-core.mjs';
 
 assert.equal(num(null),null,'Une valeur nulle doit rester inconnue et ne jamais devenir zéro');
@@ -386,3 +386,7 @@ assert.deepEqual(noEnergyPraise.executive_summary.top_strengths,[],'La synthèse
 const fadedUnits=extractDeterministicFacts([{name:'diag.pdf',text:'Surface Carrez : 82 m².\nPerformance énergétique et climatique\nà effet de serre\nconsommation\n269|10°|5 [ee]\nA CHEN\n141 KWh/m²/an émissions de CO,\n'}]);
 assert.equal(fadedUnits.dpe,'E','La paire située sous consommation dans l’étiquette reste exploitable si les unités sont effacées par l’OCR');
 assert.equal(fadedUnits.energy_consumption_kwh_m2,269);
+
+assert.match(marketStrategy(200000,250000,null),/Prix demandé non établi/);
+assert.match(marketStrategy(200000,250000,260000),/au-dessus/);
+assert.match(marketStrategy(200000,250000,220000),/se situe/);

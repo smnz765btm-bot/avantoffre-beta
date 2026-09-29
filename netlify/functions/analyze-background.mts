@@ -1,6 +1,6 @@
 import type { Context, Config } from "@netlify/functions";
 import { jobStore, expiresIn, isExpired } from "../lib/storage.mjs";
-import { prepareDocs, extractDeterministicFacts, normalizeAnalysis, applyDeterministicFacts, applyDeterministicGuardrails, applyVerdictGuardrails, parseStaticDvfCsv, applyOfficialMarketData, deterministicScores, hardenScores, num } from "../lib/reliability-core.mjs";
+import { prepareDocs, marketStrategy, extractDeterministicFacts, normalizeAnalysis, applyDeterministicFacts, applyDeterministicGuardrails, applyVerdictGuardrails, parseStaticDvfCsv, applyOfficialMarketData, deterministicScores, hardenScores, num } from "../lib/reliability-core.mjs";
 
 type Doc={name:string;text:string;pages?:number;chars?:number;quality?:string;ocrPages?:number;weakPages?:number;pageStats?:any[]};
 
@@ -305,16 +305,7 @@ Retourne uniquement un objet JSON valide correspondant aux rubriques demandées.
     analysis.negotiation=analysis.negotiation||{};
     analysis.negotiation.offer_comment="";
     const verifiedLow=num(analysis?.market?.estimate_low),verifiedHigh=num(analysis?.market?.estimate_high),listed=num(analysis?.property?.asking_price);
-    if(verifiedLow!==null&&verifiedHigh!==null){
-      analysis.negotiation.recommended_strategy=
-        listed!==null&&listed>verifiedHigh
-          ?"Le prix affiché est au-dessus de la fourchette DVF indicative. Fonder la négociation sur les écarts documentés du bien, de la copropriété et des travaux."
-          :listed!==null&&listed<verifiedLow
-            ?"Le prix affiché est sous la fourchette DVF indicative. Vérifier les pièces techniques et de copropriété avant de fixer une offre."
-            :"Le prix affiché se situe dans la fourchette DVF indicative. Valider les pièces techniques et de copropriété avant de fixer une offre.";
-    }else{
-      analysis.negotiation.recommended_strategy="Ne pas fixer de montant d'offre automatique sans références de marché vérifiées.";
-    }
+    analysis.negotiation.recommended_strategy=marketStrategy(verifiedLow,verifiedHigh,listed);
     if(Array.isArray(analysis.evidence)&&dvf.source){
       analysis.evidence=analysis.evidence.map((e:any)=>{
         const combined=String(e?.claim||"")+" "+String(e?.source||"");

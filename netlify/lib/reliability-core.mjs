@@ -743,3 +743,11 @@ export function deterministicScores(a,docs=[],marketMeta={}){
     evidence_gate:{property:propertyEvidence,copro:coproEvidence,market:marketEvidence,finance_core_count:financeCoreCount,strong_ag:strongAg,strong_accounts:strongAccounts,official_count:officialCount,market_sample_count:marketSampleCount,dispersion_ratio:dispersionRatio}
   };
 }
+
+export function marketStrategy(low,high,price){
+  if(num(price)===null)return "Prix demandé non établi : impossible de le positionner face aux ventes DVF. Complétez le prix avant de fixer une offre.";
+  if(num(low)===null||num(high)===null)return "Ne pas fixer de montant d'offre automatique sans références de marché vérifiées.";
+  if(price>high)return "Le prix affiché est au-dessus de la fourchette DVF indicative. Fonder la négociation sur les écarts documentés du bien, de la copropriété et des travaux.";
+  if(price<low)return "Le prix affiché est sous la fourchette DVF indicative. Vérifier les pièces techniques et de copropriété avant de fixer une offre.";
+  return "Le prix affiché se situe dans la fourchette DVF indicative. Valider les pièces techniques et de copropriété avant de fixer une offre.";
+}
