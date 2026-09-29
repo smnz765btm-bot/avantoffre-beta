@@ -27,3 +27,4 @@ if(fs.existsSync(uiPath)){
 }
 
 console.log('ReVisite approved-reference build ready',h.length,'— polling/uploads optimized');
+fs.copyFileSync('netlify/lib/reliability-core.mjs','dist/scoring-core.mjs');

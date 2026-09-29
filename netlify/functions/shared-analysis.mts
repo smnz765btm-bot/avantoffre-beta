@@ -1,6 +1,6 @@
 import type { Context, Config } from "@netlify/functions";
 import { jobStore, isExpired } from "../lib/storage.mjs";
-import { normalizeAnalysis, applyDeterministicGuardrails, applyVerdictGuardrails } from "../lib/reliability-core.mjs";
+import { hardenScores, normalizeAnalysis, applyDeterministicGuardrails, applyVerdictGuardrails } from "../lib/reliability-core.mjs";
 
 const json=(body:any,status=200)=>new Response(JSON.stringify(body),{status,headers:{"Content-Type":"application/json; charset=utf-8","Cache-Control":"public, max-age=60"}});
 
@@ -14,6 +14,7 @@ export default async(req:Request,_context:Context)=>{
     if(!shared)return json({error:"Cette analyse partagée est introuvable ou n’est plus disponible."},404);
     if(isExpired(shared)){await store.delete(key);return json({error:"Ce lien de partage a expiré."},410)}
     if(shared?.result?.analysis){
+      hardenScores(shared.result);
       shared.result.analysis=normalizeAnalysis(shared.result.analysis);
       if(shared.result.analysis?.__shape_repaired){
         delete shared.result.analysis.__shape_repaired;

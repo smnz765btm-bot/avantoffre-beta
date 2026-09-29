@@ -22,7 +22,7 @@ ul{padding-left:18px;margin:8px 0}li{margin:6px 0;line-height:1.45;font-size:12p
 <nav><div class="wrap" style="width:100%;display:flex;align-items:center"><div class="brand"><b>[re]</b>visite</div><div class="baseline">Au-delà de la visite.</div></div></nav>
 <main><div class="wrap" id="app"><div class="card">Chargement de l’analyse…</div></div></main>
 <div class="footer">ReVisite — Analyse documentaire et aide à la décision avant offre.</div>
-<script>
+<script src="/score-details.js"></script><script>
 const esc=s=>String(s??'').replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));
 const arr=v=>Array.isArray(v)?v:[];
 const txt=x=>{if(typeof x==='string')return x;if(!x||typeof x!=='object')return'';if(x.claim||x.label||x.title||x.description||x.detail||x.issue||x.work||x.item)return x.claim||x.label||x.title||x.description||x.detail||x.issue||x.work||x.item;if(x.name)return x.name+(x.reason?' — '+x.reason:'');return''};
@@ -58,9 +58,9 @@ function render(d){
       <p class="summary">${esc(v.summary||ex.overview||'')}</p>
       <div class="${scopeClass}"><b>Périmètre documentaire</b><br>${esc(scopeText)} Une information absente n’est jamais assimilée à un défaut.</div>
       <div class="grid" style="margin-top:14px">
-        ${k('Synthèse globale',overall===null?'N/C':overall+'/100')}
+        ${s.version===2?'':k('Synthèse globale',overall===null?'N/C':overall+'/100')}
         ${k('Bien',propertyScore===null?'N/C':propertyScore+'/100')}
-        ${k('Copropriété',coproScore===null?'N/C':coproScore+'/100')}
+        ${k('Copropriété',coproScore===null?'N/C':s.copro_status==='partial'?(s.explanation.copro.dimensions.filter(d=>d.value!==null).length+'/3 axes évalués'):coproScore+'/100')}
         ${k('Marché',marketScore===null?'N/C':marketScore+'/100')}
       </div>
       <div class="statusRow">
@@ -71,6 +71,7 @@ function render(d){
       </div>
     </div>
 
+    ${window.rvScoreDetailsHTML(s)}
     <div class="card"><h2>Le bien</h2>
       <div class="grid">
         ${k('Surface',p.surface_m2!=null?esc(p.surface_m2)+' m²':'N/C')}

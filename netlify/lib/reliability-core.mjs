@@ -368,7 +368,7 @@ export function applyVerdictGuardrails(analysis,scores,documentIssues=[]){
   const a=normalizeAnalysis(analysis);
   const issues=Array.isArray(documentIssues)?documentIssues:[];
   const importantRejected=issues.filter(x=>/(?:^|[_\s.-])(?:ag|pv)(?:[_\s.-]|$)|assembl|rcp|r[èe]glement.*copro|[ée]tat\s+descriptif|annexe\s+comptable/i.test(String(x?.name||'')));
-  const coproUnsupported=scores?.evidence_gate?.copro===false||scores?.copro===null||scores?.copro===undefined;
+  const coproUnsupported=scores?.copro_status==='partial'||scores?.evidence_gate?.copro===false||scores?.copro===null||scores?.copro===undefined;
   const incomplete=Boolean(a?.risk_flags?.copro_documents_incomplete)||importantRejected.length>=2;
   if((coproUnsupported||incomplete)&&/(?:favorable|rassurant|serein|feu\s+vert|bon\s+dossier)/i.test(text(a.verdict.label))){
     a.verdict.label='À approfondir avant offre';
@@ -380,10 +380,12 @@ export function applyVerdictGuardrails(analysis,scores,documentIssues=[]){
 }
 
 export function hardenScores(result){
+  if(result?.analysis&&result?.scores&&result.scores.version!==2)result.scores=explainScores(result);
   const s=result?.scores;if(!s)return result;
   s.property=scoreNum(s.property);s.copro=scoreNum(s.copro);s.market=scoreNum(s.market);
   s.documentation=scoreNum(s.documentation);s.confidence=scoreNum(s.confidence);
   const meta=result?.meta||{};
+  if(meta.degraded_mode){s.property=null;s.copro=null;s.market=null;s.overall=null;s.explanation=null;s.copro_status="unknown";}
   const allAxesKnown=s.property!==null&&s.copro!==null&&s.market!==null;
   const enoughDocs=s.documentation!==null&&s.documentation>=60;
   const enoughConfidence=s.confidence!==null&&s.confidence>=60;
@@ -681,7 +683,7 @@ export function applyOfficialMarketData(analysis,candidates=[]){
   return a;
 }
 
-export function deterministicScores(a,docs=[],marketMeta={}){
+function legacyScores(a,docs=[],marketMeta={}){
   const r=obj(a?.risk_flags),coverage=documentCoverage(docs),documentation=coverage.score;
   let property=82;
   if(r.electrical_anomalies)property-=5;if(r.major_property_defect)property-=12;if(r.no_elevator_high_floor)property-=6;if(r.poor_dpe)property-=8;if(r.sold_occupied)property-=2;if(r.no_parking_when_expected)property-=3;if(r.strong_property_assets)property+=4;property=clamp(property);
@@ -751,3 +753,57 @@ export function marketStrategy(low,high,price){
   if(price<low)return "Le prix affiché est sous la fourchette DVF indicative. Vérifier les pièces techniques et de copropriété avant de fixer une offre.";
   return "Le prix affiché se situe dans la fourchette DVF indicative. Valider les pièces techniques et de copropriété avant de fixer une offre.";
 }
+
+// Transparent beta risk index: unknown information affects coverage, never penalties.
+export function explainScores(result){
+  const a=obj(result?.analysis),old=obj(result?.scores),g=obj(old.evidence_gate),r=obj(a.risk_flags);
+  const assessed=['voted_major_works','recurring_major_technical_issue','litigation','governance_issue','poor_maintenance'].every(k=>typeof r[k]==='boolean');
+  const factor=(label,points)=>({label,points});
+  const tally=items=>Math.max(0,100+items.reduce((n,x)=>n+x.points,0));
+  const propertyFactors=[];const dpe=text(a.property?.dpe).toUpperCase();
+  const energyPenalty={D:5,E:12,F:22,G:30}[dpe]||0;
+  if(energyPenalty)propertyFactors.push(factor('Performance énergétique : DPE '+dpe,-energyPenalty));
+  if(r.electrical_anomalies)propertyFactors.push(factor('Anomalies électriques documentées',-15));
+  const diagnosis=arr(a.property?.diagnostics).map(x=>text(x)||text(x?.description)).join(' ');
+  if(diagnosis.split(/[.;]/).some(part=>/plomb.{0,130}dégrad|revêtements?.{0,80}dégrad.{0,80}plomb/i.test(part)&&!/absence de plomb|pas de plomb|non[ -]dégrad|sans.{0,30}dégrad/i.test(part)))propertyFactors.push(factor('Revêtement au plomb dégradé documenté (périmètre à vérifier)',-10));
+  if(r.major_property_defect)propertyFactors.push(factor('Défaut majeur du bien documenté',-25));
+  const property=g.property===true?tally(propertyFactors):null;
+  const cm=obj(a.copro_metrics),ar=num(cm.collective_arrears_ratio_pct),sr=num(cm.supplier_debt_ratio_pct);
+  const financeKnown=(g.finance_core_count||0)>=2&&(ar!==null||sr!==null);
+  const financeFactors=[];
+  if(ar!==null&&ar>8)financeFactors.push(factor('Impayés collectifs : '+ar+' % du budget',ar>25?-40:ar>15?-25:-10));
+  if(sr!==null&&sr>8)financeFactors.push(factor('Dette fournisseurs : '+sr+' % du budget',sr>15?-20:-10));
+  const worksKnown=g.strong_ag===true&&assessed,governanceKnown=worksKnown;
+  const workFactors=[];
+  const rejected=arr(a.works?.rejected_or_postponed).map(x=>text(x)||text(x?.description)).join(' ');
+  if(/toiture|façade|structure|étanchéité|ascenseur/i.test(rejected))workFactors.push(factor('Projet de travaux importants rejeté ou reporté ; besoin à clarifier',-20));
+  if(r.recurring_major_technical_issue)workFactors.push(factor('Problème technique majeur récurrent',-20));
+  if(r.poor_maintenance)workFactors.push(factor('Défaut d’entretien documenté',-15));
+  if(r.voted_major_works)workFactors.push(factor('Travaux majeurs votés : exposition financière à cadrer',-10));
+  const governanceFactors=[];
+  if(r.litigation)governanceFactors.push(factor('Litige ou procédure documenté',-20));
+  if(r.governance_issue)governanceFactors.push(factor('Difficulté de gouvernance documentée',-25));
+  const dimensions=[
+    {key:'finance',label:'Finances',weight:40,value:financeKnown?tally(financeFactors):null,factors:financeFactors,missing:'État financier collectif et ratios d’impayés/dettes à obtenir.'},
+    {key:'works',label:'Travaux et état technique',weight:40,value:worksKnown?tally(workFactors):null,factors:workFactors,missing:'PV lisibles et évaluation des risques techniques nécessaires.'},
+    {key:'governance',label:'Gouvernance',weight:20,value:governanceKnown?tally(governanceFactors):null,factors:governanceFactors,missing:'PV lisibles et évaluation de la gouvernance nécessaires.'}
+  ];
+  const known=dimensions.filter(x=>x.value!==null),weight=known.reduce((n,x)=>n+x.weight,0);
+  const partial=known.length>0&&known.length<dimensions.length;
+  let copro=weight?Math.round(known.reduce((n,x)=>n+x.value*x.weight,0)/weight):null;
+  const capped=Boolean(r.recurring_major_technical_issue&&rejected);
+  if(copro!==null&&capped)copro=Math.min(64,copro);
+  const market=g.market===true?num(old.market):null;
+  return {...old,version:2,property,copro,market,overall:null,
+    copro_status:partial?'partial':known.length===3?'complete':'unknown',
+    evidence_gate:{...g,property:property!==null,copro:copro!==null,copro_complete:known.length===3,market:market!==null},
+    axes:Object.fromEntries(dimensions.map(x=>[x.key,x.value])),
+    explanation:{method:'Indice de vigilance indicatif : base 100, puis retraits pour les risques identifiés. Ce barème bêta ne mesure ni la valeur du bien ni une probabilité de sinistre.',
+      property:{base:100,value:property,factors:propertyFactors,missing:'Surface, typologie, DPE et conclusions de diagnostics nécessaires.'},
+      copro:{value:copro,partial,coverage_weight:weight,dimensions,capped,confidence:partial?'Limitée : finances ou autres axes incomplets.':known.length===3?'Étendue aux trois axes, selon les pièces reçues.':'Insuffisante pour évaluer la copropriété.'},
+      market:{value:market,reason:num(a.property?.asking_price)===null?'Prix demandé manquant : renseignez-le pour évaluer son positionnement.':market===null?'Références DVF insuffisantes ou trop dispersées.':'Positionnement du prix demandé face à la fourchette DVF vérifiée ; ce score ne mesure pas la qualité technique.'},
+      overall:'L’avis repose sur les risques et les vérifications à mener. Aucune moyenne globale ne masque une information manquante.'}
+  };
+}
+
+export function deterministicScores(a,docs=[],marketMeta={}){return explainScores({analysis:a,scores:legacyScores(a,docs,marketMeta)});}

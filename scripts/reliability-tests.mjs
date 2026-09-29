@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import {documentCoverage,marketStrategy,prepareDocs,normalizeAnalysis,extractDeterministicFacts,applyDeterministicFacts,applyDeterministicGuardrails,applyVerdictGuardrails,parseStaticDvfCsv,selectOfficialComparables,applyOfficialMarketData,deterministicScores,hardenScores,num} from '../netlify/lib/reliability-core.mjs';
+import {documentCoverage,explainScores,marketStrategy,prepareDocs,normalizeAnalysis,extractDeterministicFacts,applyDeterministicFacts,applyDeterministicGuardrails,applyVerdictGuardrails,parseStaticDvfCsv,selectOfficialComparables,applyOfficialMarketData,deterministicScores,hardenScores,num} from '../netlify/lib/reliability-core.mjs';
 import {partitionUploadDocuments} from '../netlify/lib/upload-core.mjs';
 
 assert.equal(num(null),null,'Une valeur nulle doit rester inconnue et ne jamais devenir zéro');
@@ -28,7 +28,7 @@ const scored=deterministicScores({
  property:{asking_price:200000,surface_m2:82,rooms:4,dpe:'C',diagnostics:['Électricité conforme au rapport','DPE C']},
  market:{estimate_low:190000,estimate_high:210000,confidence:'bonne',dvf_reference:{sample_count:20,dispersion_ratio:1.3}}
 },fakeDocs,{officialCount:5});
-assert.ok(scored.overall!==null,'Le score global est autorisé lorsque la couverture est suffisante');
+assert.equal(scored.overall,null,'L’avis global ne repose pas sur une moyenne artificielle');
 assert.ok(scored.confidence>=scored.documentation*.7,'La confiance doit suivre principalement la qualité documentaire');
 
 
@@ -390,3 +390,17 @@ assert.equal(fadedUnits.energy_consumption_kwh_m2,269);
 assert.match(marketStrategy(200000,250000,null),/Prix demandé non établi/);
 assert.match(marketStrategy(200000,250000,260000),/au-dessus/);
 assert.match(marketStrategy(200000,250000,220000),/se situe/);
+
+const partialInput={analysis:{property:{dpe:'E',diagnostics:['Plomb dégradé dans le garage'],asking_price:null},risk_flags:{electrical_anomalies:true,voted_major_works:false,recurring_major_technical_issue:false,litigation:false,governance_issue:false,poor_maintenance:false},works:{rejected_or_postponed:['Réfection de la toiture rejetée']},copro_metrics:{}},scores:{documentation:95,evidence_gate:{property:true,strong_ag:true,finance_core_count:0,market:false}}};
+const partialV2=explainScores(partialInput);
+assert.equal(partialV2.property,63,'Chaque retrait explique exactement la note du bien');
+assert.equal(partialV2.copro_status,'partial');
+assert.equal(partialV2.axes.finance,null,'Une finance inconnue n’est ni zéro ni une pénalité');
+assert.equal(partialV2.axes.works,80);
+assert.equal(partialV2.axes.governance,100);
+assert.equal(partialV2.overall,null,'Pas de moyenne globale avec des axes manquants');
+assert.equal(partialV2.market,null,'Pas de score prix sans prix demandé');
+const rescue=hardenScores({...partialInput,meta:{degraded_mode:true}});
+assert.equal(rescue.scores.property,null);assert.equal(rescue.scores.explanation,null,'Le mode de secours ne réintroduit pas de score via les explications');
+
+const nonDegraded=structuredClone(partialInput);nonDegraded.analysis.property.diagnostics=['Plomb présent dans un revêtement non dégradé'];assert.equal(explainScores(nonDegraded).property,73,'Le plomb non dégradé ne reçoit pas la pénalité du plomb dégradé');
