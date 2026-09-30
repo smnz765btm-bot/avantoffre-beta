@@ -464,4 +464,7 @@ assert.equal(bieniciId(listingURL+'/'),'example-123');
 assert.equal(parseListingHtml('<script type="application/ld+json">{"@type":"Apartment","offers":{"price":154000,"priceCurrency":"EUR"}}</script>',portal).asking_price,154000);
 assert.equal(parseListingHtml('<meta property="product:price:amount" content="154000"><meta property="product:price:amount" content="139000">',portal),null,'Des prix contradictoires ne sont pas devinés');
 const visual=globalThis.rvReportHTML({analysis:overlap.analysis,scores:fundsScore,meta:{}});assert.ok(visual.includes('Note globale'));assert.ok(visual.includes('Note provisoire'));assert.ok(visual.includes('Fonds de copropriété non restitués'));
+const {listingSources}=await import('../netlify/lib/listing.mjs');
+assert.deepEqual(listingSources([{type:'web_search_call',status:'completed',action:{type:'open_page',url:portal}}]),[portal]);
+assert.deepEqual(listingSources([{type:'web_search_call',status:'failed',action:{type:'open_page',url:portal}}]),[]);
 console.log('ReVisite reliability tests: OK');

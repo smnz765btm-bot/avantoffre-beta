@@ -36,3 +36,8 @@ export function parseListingHtml(html,url){
  for(const m of html.matchAll(/<script[^>]+type=["']application\/ld\+json["'][^>]*>([\s\S]*?)<\/script>/gi)){try{const data=JSON.parse(m[1]);const roots=Array.isArray(data)?data:[data];for(const root of roots.flatMap(x=>x['@graph']||[x])){if(/ItemList|BreadcrumbList/i.test(String(root['@type'])))continue;const offer=root.offers||root.mainEntity?.offers;if(offer&&!Array.isArray(offer)&&(!offer.priceCurrency||offer.priceCurrency==='EUR'))add(offer.price)}}catch{}}
  const unique=[...new Set(prices)];return unique.length===1?{status:'ok',asking_price:unique[0],source:url,provider:new URL(url).hostname,retrieved_at:new Date().toISOString(),method:'structured_page'}:null;
 }
+
+export function listingSources(output=[]){return output.flatMap(x=>[
+ ...(x.type==='web_search_call'&&x.status==='completed'?[x.action?.url,...(x.action?.sources||[]).map(s=>s.url)]:[]),
+ ...(x.content||[]).flatMap(c=>(c.annotations||[]).filter(a=>a.type==='url_citation').map(a=>a.url))
+]).filter(Boolean).map(listingUrlSafe).filter(Boolean)}
