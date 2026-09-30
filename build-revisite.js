@@ -11,8 +11,8 @@ h=h.replace(/<section class="hero">[\s\S]*?<\/section>/, `<section class="hero">
 h=h.replace('Préparez votre analyse','Votre dossier commence ici');
 h=h.replace('Décision avant offre</h2>','Votre bien, en un regard</h2>');
 h=h.replace(/<div class="tip">[\s\S]*?<\/div>/,'<div class="tip">Ajoutez les précisions qui comptent pour votre projet. Vous pourrez partager la synthèse avec votre conseiller.</div>');
-h=h.replace('</footer>','</footer>');
-h=h.replace('<div class="footer">','<div class="wrap rv-professional-note"><b>Un éclairage pour vos échanges.</b> ReVisite vous aide à comprendre les documents. Votre agent immobilier et votre notaire restent vos interlocuteurs pour vous conseiller et sécuriser votre projet.</div><div class="footer">');
+
+h=h.replace('<footer class="footer">','<div class="wrap rv-professional-note"><b>Un éclairage pour vos échanges.</b> ReVisite vous aide à comprendre les documents. Votre agent immobilier et votre notaire restent vos interlocuteurs pour vous conseiller et sécuriser votre projet.</div><footer class="footer">');
 
 // Le code source contient directement les optimisations runtime.
  // Le build ne réécrit plus les appels réseau afin d'éviter les hooks fragiles et les redéploiements correctifs.
