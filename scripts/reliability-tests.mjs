@@ -356,7 +356,7 @@ const unreadableGraphicalPlan=partitionUploadDocuments([{
 assert.equal(unreadableGraphicalPlan.accepted.length,0,'Un plan sans texte réellement détecté ne doit pas être déclaré exploitable');
 assert.equal(unreadableGraphicalPlan.rejected.length,1);
 
-console.log('ReVisite reliability tests: OK');
+
 
 const compact=prepareDocs(many,{maxTotal:180000,maxDoc:30000});
 assert.ok(compact.reduce((s,d)=>s+d.chars_transmitted,0)<=180000,'Le mode compact doit réduire fortement le contexte');
@@ -447,3 +447,5 @@ assert.equal(invalidAnalysis.property.dpe,'C');
 assert.ok(invalidAnalysis.questions_before_offer[0].includes('ADEME'));
 const invalidScore=explainScores({analysis:invalidAnalysis,scores:{evidence_gate:{property:true}}});
 assert.equal(invalidScore.property,null,'Un DPE déclaré non valable ne permet pas de noter le logement');
+
+console.log('ReVisite reliability tests: OK');
