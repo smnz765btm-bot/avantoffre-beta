@@ -3,7 +3,7 @@ import {getStore} from '@netlify/blobs';
 const digest=async s=>Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',new TextEncoder().encode(s)))).map(x=>x.toString(16).padStart(2,'0')).join('');
 export async function resolveListing(raw,{allowSearch=true}={}){
  const url=listingUrlSafe(raw);if(!url)return{status:'unsupported',source:raw};
- const store=getStore('revisite-listing-cache',{consistency:'strong'}),key=await digest(url);
+ const store=getStore('revisite-listing-cache',{consistency:'strong'}),key=await digest('v2:'+url);
  const cached=await store.get(key,{type:'json'});if(cached&&Date.parse(cached.expires_at)>Date.now())return cached.value;
  let value=await fetchListing(url);
  if(value.status!=='ok'){
@@ -21,8 +21,9 @@ export async function resolveListing(raw,{allowSearch=true}={}){
     const rawText=output.flatMap(x=>x.content||[]).filter(x=>x.type==='output_text').map(x=>x.text).join('\n');
     const match=rawText.match(/\{[\s\S]*\}/),parsed=match?JSON.parse(match[0]):null;
     const sources=output.flatMap(x=>[...(x.action?.sources||[]).map(s=>s.url),...(x.content||[]).flatMap(c=>(c.annotations||[]).map(a=>a.url))]).filter(Boolean).map(listingUrlSafe);
+    value={...value,lookup_status:!response.ok?'provider_'+response.status:!parsed?'no_result':Number(parsed.asking_price)<=1000?'price_not_found':listingUrlSafe(parsed.source)!==url?'different_listing':!sources.includes(url)?'source_not_verified':'verified',lookup_error:response.ok?undefined:String(data.error?.message||'').slice(0,180)};
     if(response.ok&&parsed&&listingUrlSafe(parsed.source)===url&&sources.includes(url)&&Number(parsed.asking_price)>1000){value={status:'ok',asking_price:Number(parsed.asking_price),source:url,provider:new URL(url).hostname,retrieved_at:new Date().toISOString(),method:'web_verified',surface_m2:Number(parsed.surface_m2)||null,rooms:Number(parsed.rooms)||null,title:String(parsed.title||'').slice(0,200),garage_extra:parsed.garage_extra===true}}
-   }catch{}
+   }catch(err){value={...value,lookup_status:err?.name||"lookup_failed"}}
   }
  }
  value={...value,source:url};await store.setJSON(key,{value,expires_at:new Date(Date.now()+(value.status==='ok'?21600000:120000)).toISOString()});return value;

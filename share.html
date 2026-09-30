@@ -36,7 +36,7 @@ function render(d){const r=d.result||{};document.title=(r.analysis?.property?.ad
 async function init(){
   const id=new URLSearchParams(location.search).get('id');
   if(!id){document.querySelector('#app').innerHTML='<div class="card error"><h2>Lien de partage invalide</h2></div>';return}
-  try{const r=await fetch('/api/shared-analysis?id='+encodeURIComponent(id));const d=await r.json();if(!r.ok)throw Error(d.error||'Analyse introuvable');render(d)}
+  try{const r=await fetch('/api/shared-analysis?id='+encodeURIComponent(id)+'&revision=4',{cache:'no-store'});const d=await r.json();if(!r.ok)throw Error(d.error||'Analyse introuvable');render(d)}
   catch(e){document.querySelector('#app').innerHTML=`<div class="card error"><h2>Analyse indisponible</h2><p>${esc(e.message)}</p></div>`}
 }
 init();
