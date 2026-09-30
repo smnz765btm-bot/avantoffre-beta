@@ -706,12 +706,20 @@ export function deterministicScores(a,docs=[],marketMeta={}){
 
   const propertyScore=propertyEvidence?property:null;
   const coproScore=coproEvidence?copro:null;
-  const marketScore=marketEvidence?market:null;
+  const standingLabels={simple:"Simple",standard:"Standard",soigne:"Soigné",premium:"Haut de gamme"};
+  const standing=Object.hasOwn(standingLabels,marketMeta.standing)?marketMeta.standing:"";
+  const adjustment={simple:-3,standard:0,soigne:2,premium:4}[standing]||0;
+  // Small, declared preference adjustment; never alters observed DVF values.
+  const adjusted=adjustment>0?Math.max(market,Math.min(84,market+adjustment)):clamp(market+adjustment);
+  const marketScore=marketEvidence?adjusted:null;
+  const applied=marketEvidence?adjusted-market:0;
+  const market_context={standing,base_score:marketEvidence?market:null,adjustment_points:applied,
+    note:standing?`Standing déclaré : ${standingLabels[standing]}. Ajustement indicatif du score prix : ${applied>0?"+":""}${applied} point(s). Cette appréciation n’est pas vérifiée et ne modifie pas les références DVF.`:""};
   const overall=docs.length>0&&documentation>=60&&confidence>=60&&propertyScore!==null&&coproScore!==null&&marketScore!==null
     ?Math.round(propertyScore*.30+coproScore*.40+marketScore*.30):null;
 
   return{
-    property:propertyScore,copro:coproScore,market:marketScore,documentation,confidence,overall,
+    property:propertyScore,copro:coproScore,market:marketScore,market_context,documentation,confidence,overall,
     axes:{finance,works,governance,technical},coverage,
     evidence_gate:{property:propertyEvidence,copro:coproEvidence,market:marketEvidence,finance_core_count:financeCoreCount,strong_ag:strongAg,strong_accounts:strongAccounts,official_count:officialCount,market_sample_count:marketSampleCount,dispersion_ratio:dispersionRatio}
   };

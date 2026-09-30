@@ -199,7 +199,10 @@ export default async(req:Request,_context:Context)=>{
     if(!listingUrl&&!address&&docs.length===0)throw new Error("Ajoutez au moins une annonce, une adresse ou un document.");
 
     let prepared=prepareDocs(docs),preparedChars=prepared.reduce((s:number,d:any)=>s+(Number(d.chars_transmitted)||0),0);
-    const listingPrice=listingUrl?await readListingPrice(listingUrl):null;
+    const manualPrice=num(body?.askingPrice);
+    const standing=["simple","standard","soigne","premium"].includes(body?.standing)?body.standing:"";
+    const listingPrice=manualPrice!==null&&manualPrice>0?manualPrice:listingUrl?await readListingPrice(listingUrl):null;
+    const priceSource=manualPrice!==null&&manualPrice>0?"Prix saisi par l’utilisateur":listingUrl;
     const dvf:any=await fetchDvfCandidates(address,store);
     const officialDvf=dvf.status==="ok"?dvfPromptRows(dvf.candidates):"Aucune donnée DVF+ officielle n'a pu être récupérée automatiquement pour cette analyse.";
 
@@ -254,7 +257,7 @@ Retourne uniquement un objet JSON valide correspondant aux rubriques demandées.
       evidence:[{claim:"",status:"FACT|INFERENCE|UNKNOWN",source:"",page:null}],questions_before_offer:[],verdict:{label:"",summary:"",vigilance:"faible|modérée|forte",why:"",go_if:[],stop_if:[]}
     };
 
-    const buildUser=(preparedDocs:any[],compact=false)=>`ADRESSE DU BIEN:\n${address||"non fournie"}\n\nURL ANNONCE:\n${listingUrl||"non fournie"}\nPRIX DE VENTE LU SUR CETTE ANNONCE : ${listingPrice===null?"non récupéré":listingPrice+" EUR, source : "+listingUrl}\n\nINFORMATIONS COMPLÉMENTAIRES:\n${extra||"aucune"}\n\nDOCUMENTS NON EXPLOITABLES / EXCLUS DE L'ANALYSE:\n${documentIssues.length?documentIssues.map((x:any)=>`- ${x.name}: ${x.reason}`).join("\n"):"aucun"}\n\nVENTES DVF+ OFFICIELLES DU SECTEUR (CANDIDATS BRUTS À FILTRER SELON LE BIEN):\n${officialDvf}\n\nSTRUCTURE JSON ATTENDUE:\n${jsonText(schemaHint)}\n\n${compact?"MODE DE SECOURS COMPACT : sois particulièrement concis et priorise les montants, décisions d’AG, diagnostics, charges, travaux et incohérences.\n\n":""}DOCUMENTS EXTRAITS:\n${preparedDocs.map((d:any,i:number)=>`\n--- DOCUMENT ${i+1}: ${d.name} | pages=${d.pages??"?"} | lecture=${d.quality||"non qualifiée"} | caractères transmis=${d.chars_transmitted}/${d.chars_source}${d.truncated?" | ÉCHANTILLONNÉ":""} ---\n${d.text}`).join("\n")}`;
+    const buildUser=(preparedDocs:any[],compact=false)=>`ADRESSE DU BIEN:\n${address||"non fournie"}\n\nURL ANNONCE:\n${listingUrl||"non fournie"}\nPRIX DE VENTE À UTILISER : ${listingPrice===null?"non récupéré":listingPrice+" EUR, source : "+priceSource}\n\nINFORMATIONS COMPLÉMENTAIRES:\n${extra||"aucune"}\nStanding déclaré par l’utilisateur : ${standing||"non précisé"}. Appréciation subjective, à confirmer lors de la visite ; aucune majoration automatique de valeur DVF.\n\nDOCUMENTS NON EXPLOITABLES / EXCLUS DE L'ANALYSE:\n${documentIssues.length?documentIssues.map((x:any)=>`- ${x.name}: ${x.reason}`).join("\n"):"aucun"}\n\nVENTES DVF+ OFFICIELLES DU SECTEUR (CANDIDATS BRUTS À FILTRER SELON LE BIEN):\n${officialDvf}\n\nSTRUCTURE JSON ATTENDUE:\n${jsonText(schemaHint)}\n\n${compact?"MODE DE SECOURS COMPACT : sois particulièrement concis et priorise les montants, décisions d’AG, diagnostics, charges, travaux et incohérences.\n\n":""}DOCUMENTS EXTRAITS:\n${preparedDocs.map((d:any,i:number)=>`\n--- DOCUMENT ${i+1}: ${d.name} | pages=${d.pages??"?"} | lecture=${d.quality||"non qualifiée"} | caractères transmis=${d.chars_transmitted}/${d.chars_source}${d.truncated?" | ÉCHANTILLONNÉ":""} ---\n${d.text}`).join("\n")}`;
 
     let data:any=null,parsed:any=null,totalUsage:any=null,modelAttempts=0,fallbackCompaction=false,lastError:any=null;
     for(let attempt=1;attempt<=3;attempt++){
@@ -300,7 +303,7 @@ Retourne uniquement un objet JSON valide correspondant aux rubriques demandées.
     const degradedMode=Boolean(lastError||!parsed);
     let analysis=degradedMode?basicFallbackAnalysis(docs,address):normalizeAnalysis(parsed);
     analysis=applyDeterministicFacts(analysis,docs);
-    if(listingPrice!==null){analysis.property.asking_price=listingPrice;analysis.evidence.push({claim:`Prix de vente affiché : ${listingPrice} EUR`,status:"FACT",source:listingUrl,page:null})}
+    if(listingPrice!==null){analysis.property.asking_price=listingPrice;analysis.evidence.push({claim:`Prix de vente affiché : ${listingPrice} EUR`,status:"FACT",source:priceSource,page:null})}
     if(address)analysis.property.address=address;
     analysis=applyOfficialMarketData(analysis,dvf.candidates||[]);
     analysis.documents=analysis.documents||{};
@@ -340,13 +343,14 @@ Retourne uniquement un objet JSON valide correspondant aux rubriques demandées.
     const p=analysis.property||{};
     if(p.asking_price&&p.surface_m2&&!p.price_per_m2)p.price_per_m2=Math.round(Number(p.asking_price)/Number(p.surface_m2));
     const officialCount=Array.isArray(analysis?.market?.comparables)?analysis.market.comparables.filter((x:any)=>x?.type==="DVF").length:0;
-    const scores=deterministicScores(analysis,docs,{officialCount});
+    const scores=deterministicScores(analysis,docs,{officialCount,standing});
     analysis=applyVerdictGuardrails(analysis,scores,documentIssues);
+    if(standing){analysis.market.analysis+=(" "+scores.market_context.note)}
     if(degradedMode){
       scores.property=null;scores.copro=null;scores.market=null;scores.overall=null;scores.confidence=Math.min(Number(scores.confidence)||0,35);
     }
     const result={analysis,scores,meta:{
-      model,listing_url:listingUrl,listing_price:listingPrice,document_count:docs.length,rejected_document_count:documentIssues.length,beta:true,generated_at:new Date().toISOString(),
+      model,listing_url:listingUrl,listing_price:listingPrice,price_source:priceSource,standing,document_count:docs.length,rejected_document_count:documentIssues.length,beta:true,generated_at:new Date().toISOString(),
       input_chars:preparedChars,dvf_status:dvf.status,dvf_source:dvf.source||null,dvf_candidate_count:Array.isArray(dvf.candidates)?dvf.candidates.length:0,
       dvf_cache_hit:Boolean(dvf.cache_hit),usage:totalUsage||null,model_attempts:modelAttempts,fallback_compaction:fallbackCompaction,degraded_mode:degradedMode,score_withheld:scores.overall===null,cache_hit:false,
       document_quality:docs.map((d:any)=>({name:String(d?.name||"document"),quality:String(d?.quality||"unknown"),pages:Number(d?.pages)||null,weak_pages:Number(d?.weakPages)||0,ocr_pages:Number(d?.ocrPages)||0}))

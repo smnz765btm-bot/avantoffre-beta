@@ -344,3 +344,11 @@ console.log('ReVisite reliability tests: OK');
 
 const compact=prepareDocs(many,{maxTotal:180000,maxDoc:30000});
 assert.ok(compact.reduce((s,d)=>s+d.chars_transmitted,0)<=180000,'Le mode compact doit réduire fortement le contexte');
+
+const standingAnalysis={property:{asking_price:349000},market:{estimate_low:240000,estimate_high:321000,confidence:'moyenne',dvf_reference:{sample_count:53,dispersion_ratio:1.69}}};
+const baseline=deterministicScores(standingAnalysis,[],{standing:'standard'});
+const premium=deterministicScores(standingAnalysis,[],{standing:'premium'});
+assert.equal(premium.market-baseline.market,4,'Le standing haut de gamme doit modifier le score de quatre points au maximum');
+assert.equal(standingAnalysis.market.estimate_high,321000,'Le standing ne modifie jamais les références DVF');
+assert.equal(deterministicScores({property:{},market:standingAnalysis.market},[],{standing:'premium'}).market,null,'Le standing seul ne permet pas de calculer un score');
+assert.equal(deterministicScores(standingAnalysis,[],{standing:'invalid'}).market,baseline.market,'Un standing inconnu ne doit pas modifier le score');
