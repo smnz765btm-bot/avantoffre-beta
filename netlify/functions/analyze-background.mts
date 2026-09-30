@@ -160,7 +160,7 @@ function getOpenAIKey(){
 }
 
 export default async(req:Request,_context:Context)=>{
-  let jobId="";const store=jobStore();
+  let jobId="";const store=jobStore();let recoveryContext:any=null,pendingReport:any=null;
   try{
     const trigger:any=await req.json();
     jobId=String(trigger?.jobId||"").replace(/[^a-zA-Z0-9_-]/g,"").slice(0,80);
@@ -168,6 +168,11 @@ export default async(req:Request,_context:Context)=>{
     const inputKey=`input-${jobId}`;
     const body:any=await store.get(inputKey,{type:"json"});
     if(!body)throw new Error("Les données de l'analyse sont introuvables.");
+    recoveryContext={
+      address:String(body?.address||"").trim().slice(0,300),
+      docs:Array.isArray(body?.documents)?body.documents.slice(0,30):[],
+      documentIssues:Array.isArray(body?.documentIssues)?body.documentIssues.slice(0,30):[]
+    };
     await store.delete(inputKey);
     await store.setJSON(jobId,{status:"running",started_at:new Date().toISOString(),progress:"Analyse en cours",expires_at:expiresIn(1000*60*60*3)});
 
@@ -328,13 +333,45 @@ Retourne uniquement un objet JSON valide correspondant aux rubriques demandées.
       dvf_cache_hit:Boolean(dvf.cache_hit),usage:totalUsage||null,model_attempts:modelAttempts,fallback_compaction:fallbackCompaction,degraded_mode:degradedMode,score_withheld:scores.overall===null,cache_hit:false,
       document_quality:docs.map((d:any)=>({name:String(d?.name||"document"),quality:String(d?.quality||"unknown"),pages:Number(d?.pages)||null,weak_pages:Number(d?.weakPages)||0,ocr_pages:Number(d?.ocrPages)||0}))
     }};
+    pendingReport=result;
     hardenScores(result);
     await store.setJSON(jobId,{status:"done",result,expires_at:expiresIn(1000*60*60*3)});
+    pendingReport=null;
     if(!degradedMode&&cacheKey.startsWith("analysis-cache-")){
       try{await store.setJSON(cacheKey,{result,expires_at:expiresIn(1000*60*60*24)})}catch{}
     }
   }catch(err:any){
     console.error("ReVisite background error",err);
+    if(jobId){
+      try{
+        const saved:any=await store.get(jobId,{type:"json"});
+        if(saved?.status==="done"&&saved?.result)return;
+      }catch(readErr){console.error("ReVisite recovery read error",readErr)}
+
+      const now=new Date().toISOString();
+      try{
+        let result=pendingReport;
+        if(!result&&recoveryContext){
+          const docs:Doc[]=recoveryContext.docs||[];
+          const analysis=basicFallbackAnalysis(docs,recoveryContext.address||"");
+          analysis.documents.rejected=recoveryContext.documentIssues||[];
+          result={
+            analysis,
+            scores:{property:null,copro:null,market:null,overall:null,confidence:0},
+            meta:{
+              model:"recovery-fallback",document_count:docs.length,rejected_document_count:(recoveryContext.documentIssues||[]).length,
+              beta:true,generated_at:now,degraded_mode:true,score_withheld:true,recovery_fallback:true,
+              document_quality:docs.map((d:any)=>({name:String(d?.name||"document"),quality:String(d?.quality||"unknown"),pages:Number(d?.pages)||null,weak_pages:Number(d?.weakPages)||0,ocr_pages:Number(d?.ocrPages)||0}))
+            }
+          };
+        }
+        if(result){
+          try{hardenScores(result)}catch(scoreErr){console.error("ReVisite recovery score hardening error",scoreErr)}
+          await store.setJSON(jobId,{status:"done",result,expires_at:expiresIn(1000*60*60*3)});
+          return;
+        }
+      }catch(recoveryErr){console.error("ReVisite report recovery error",recoveryErr)}
+    }
     const message=String(err?.message||"");
     const error_code=
       /REPORT_OUTPUT_LIMIT|Réponse IA non structurée|Aucun rapport exploitable/i.test(message)?"MODEL_OUTPUT":
@@ -342,7 +379,10 @@ Retourne uniquement un objet JSON valide correspondant aux rubriques demandées.
       /context|too long|too large|request too large|413/i.test(message)?"INPUT_TOO_LARGE":
       /MODEL_TIMEOUT|timeout|aborted|5\d\d|server_error|temporarily unavailable/i.test(message)?"PROVIDER_TRANSIENT":
       "ENGINE";
-    if(jobId)await store.setJSON(jobId,{status:"error",error_code,expires_at:expiresIn(1000*60*60)});
+    if(jobId){
+      try{await store.setJSON(jobId,{status:"error",error_code,expires_at:expiresIn(1000*60*60)})}
+      catch(saveErr){console.error("ReVisite error status persistence failed",saveErr)}
+    }
   }
 };
 
