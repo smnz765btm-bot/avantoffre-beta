@@ -40,3 +40,13 @@ Noter un échec avec le nom du document, la page, le résultat attendu et le ré
 - Les synthèses intermédiaires de documents très longs sont couvertes par les tests automatiques ; elles ne garantissent pas la restitution de chaque détail.
 - Le nouveau test du DDT ne vaut pas relecture des neuf autres pièces de l'ancien rapport.
 - Les anciens rapports ne sont pas régénérés par une mise à jour du site : relancer une analyse pour bénéficier de la nouvelle extraction.
+
+## Mise à jour visuelle et barème V3
+
+- Tableau de bord : jauge globale, trois cartes de notes, lecture documentaire distincte de la qualité du bien, détails à ouvrir.
+- Prix vérifié sur une annonce Logic-Immo : 154 000 €, source cliquable. Lecture directe complétée par recherche web sourcée et cache ; champ de prix explicite en secours.
+- Actualisation du prix d’un rapport existant sans réanalyse payante des documents : crée une nouvelle copie, conserve la date et la portée de l’analyse d’origine.
+- Barème : risques techniques liés regroupés, pas de pénalité automatique pour un vote d’entretien ; procédures et difficultés de gestion non cumulées.
+- Note globale pondérée 35 % logement, 30 % prix, 35 % copropriété ; au moins deux parties connues, note provisoire si des parties ou axes manquent. Les risques graves documentés restent visibles et plafonnent les notes.
+- Validation du cas fourni : prix 90, copropriété 70, global provisoire 79. Logement non noté car DPE non régularisé. Aucune classe DPE n’est inventée pour obtenir une note.
+- Tests automatiques : source web consultée (recherche ou ouverture de page), URL autorisée, prix ambigus refusés, score global et pénalités non cumulées, maintien des alertes financières.

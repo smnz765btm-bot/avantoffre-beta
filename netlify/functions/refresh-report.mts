@@ -16,6 +16,8 @@ export default async(req:Request)=>{
   result.analysis=applyListing(result.analysis,listing);
   const a=result.analysis,missingPrice=(x:any)=>/prix (?:demandé|affiché|d’achat|d'achat).{0,40}(?:manqu|absent|non (?:transmis|disponible|fourni|établi))|(?:obtenir|quel est).{0,20}prix demandé|prix demandé et (?:fiche|caractéristiques)/i.test(typeof x==='string'?x:'');
   for(const [o,k] of [[a.property,'weaknesses'],[a.documents,'missing_or_to_obtain'],[a,'questions_before_offer'],[a.buyer_blocks?.before_offer_checks,'checks']])if(o&&Array.isArray(o[k]))o[k]=o[k].filter((x:any)=>!missingPrice(x));
+  if(a.buyer_blocks?.real_acquisition_budget){const budget=a.buyer_blocks.real_acquisition_budget;budget.purchase_price=a.property.asking_price;budget.summary='Prix annoncé confirmé ; frais d’acquisition et part des travaux à chiffrer.';budget.unknown_costs=(budget.unknown_costs||[]).map((x:any)=>/prix d.achat et frais/i.test(String(x))?'Frais d’acquisition.':x);}
+  a.property.property_analysis=String(a.property.property_analysis||'').replace(/Le prix demandé n.est pas transmis\.\s*/gi,'');
   a.negotiation.recommended_strategy=marketStrategy(a.market.estimate_low,a.market.estimate_high,a.property.asking_price);
   a.market.positioning=a.negotiation.recommended_strategy;
   a.verdict.summary='Prix de l’annonce actualisé. Les autres constats proviennent de l’analyse documentaire initiale.';
