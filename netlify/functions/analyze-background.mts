@@ -1,5 +1,6 @@
+import {resolveListing} from '../lib/listing-resolver.mjs';
 import {prepareCompleteDocuments} from '../lib/document-passes.mjs';
-import {fetchListing,applyListing} from '../lib/listing.mjs';
+import {applyListing} from '../lib/listing.mjs';
 import type { Context, Config } from "@netlify/functions";
 import { jobStore, expiresIn, isExpired } from "../lib/storage.mjs";
 import { prepareDocs, marketStrategy, extractDeterministicFacts, normalizeAnalysis, applyDeterministicFacts, applyDeterministicGuardrails, applyVerdictGuardrails, parseStaticDvfCsv, applyOfficialMarketData, deterministicScores, hardenScores, num } from "../lib/reliability-core.mjs";
@@ -179,7 +180,7 @@ export default async(req:Request,_context:Context)=>{
     const documentIssues=Array.isArray(body?.documentIssues)?body.documentIssues.slice(0,30).map((x:any)=>({name:String(x?.name||"document").slice(0,240),reason:String(x?.reason||"Non exploitable").slice(0,300)})):[];
     if(!listingUrl&&!address&&docs.length===0)throw new Error("Ajoutez au moins une annonce, une adresse ou un document.");
 
-    const listing=await fetchListing(listingUrl);
+    const listing=await resolveListing(listingUrl);
     const verifiedFacts=extractDeterministicFacts(docs);
     let prepared:any[]=[],preparedChars=0;
     const dvf:any=await fetchDvfCandidates(address,store);
@@ -261,8 +262,8 @@ Retourne uniquement un objet JSON valide correspondant aux rubriques demandées.
       const user=buildUser(prepared,attempt>=2);
       const payload:any={
         model,input:[{role:"system",content:[{type:"input_text",text:system}]},{role:"user",content:[{type:"input_text",text:user}]}],
-        tools:attempt===1&&listingUrl?[{type:"web_search"}]:[],reasoning:{effort:"low"},max_output_tokens:attempt===1?12000:attempt===2?8000:6000,
-        text:{...(attempt===1&&listingUrl?{}:{format:{type:"json_object"}}),verbosity:"low"},store:false,prompt_cache_key:"revisite-analysis-v5"
+        tools:[],reasoning:{effort:"low"},max_output_tokens:attempt===1?12000:attempt===2?8000:6000,
+        text:{format:{type:"json_object"},verbosity:"low"},store:false,prompt_cache_key:"revisite-analysis-v5"
       };
       try{
         const rsp=await fetchWithTimeout("https://api.openai.com/v1/responses",{method:"POST",headers:{Authorization:`Bearer ${apiKey}`,"Content-Type":"application/json"},body:JSON.stringify(payload)});
@@ -294,6 +295,7 @@ Retourne uniquement un objet JSON valide correspondant aux rubriques demandées.
     analysis=applyDeterministicFacts(analysis,docs);
     if(address)analysis.property.address=address;
     analysis=applyListing(analysis,listing);
+    if(Number(body.askingPrice)>0){analysis.property.asking_price=Number(body.askingPrice);analysis.property.price_source="Prix saisi par l’utilisateur";analysis.property.price_per_m2=analysis.property.surface_m2>0?Math.round(Number(body.askingPrice)/analysis.property.surface_m2):null;}
     analysis=applyOfficialMarketData(analysis,dvf.candidates||[]);
     analysis.documents=analysis.documents||{};
     analysis.documents.received=docs.map((d:any)=>String(d?.name||"document"));
@@ -329,7 +331,7 @@ Retourne uniquement un objet JSON valide correspondant aux rubriques demandées.
       scores.property=null;scores.copro=null;scores.market=null;scores.overall=null;scores.confidence=Math.min(Number(scores.confidence)||0,35);
     }
     const result={analysis,scores,meta:{
-      document_analysis:complete.coverage,model,document_count:docs.length,rejected_document_count:documentIssues.length,beta:true,generated_at:new Date().toISOString(),
+      listing_url:listingUrl,listing_status:listing.status,listing_source:listing.source||null,document_analysis:complete.coverage,model,document_count:docs.length,rejected_document_count:documentIssues.length,beta:true,generated_at:new Date().toISOString(),
       input_chars:preparedChars,dvf_status:dvf.status,dvf_source:dvf.source||null,dvf_candidate_count:Array.isArray(dvf.candidates)?dvf.candidates.length:0,
       dvf_cache_hit:Boolean(dvf.cache_hit),usage:totalUsage||null,model_attempts:modelAttempts,attempt_failures:attemptFailures,fallback_compaction:fallbackCompaction,degraded_mode:degradedMode,score_withheld:scores.overall===null,cache_hit:false,
       document_quality:docs.map((d:any)=>({name:String(d?.name||"document"),quality:String(d?.quality||"unknown"),pages:Number(d?.pages)||null,weak_pages:Number(d?.weakPages)||0,ocr_pages:Number(d?.ocrPages)||0}))

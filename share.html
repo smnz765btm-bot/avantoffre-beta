@@ -22,7 +22,7 @@ ul{padding-left:18px;margin:8px 0}li{margin:6px 0;line-height:1.45;font-size:12p
 <nav><div class="wrap" style="width:100%;display:flex;align-items:center"><div class="brand"><b>[re]</b>visite</div><div class="baseline">Au-delà de la visite.</div></div></nav>
 <main><div class="wrap" id="app"><div class="card">Chargement de l’analyse…</div></div></main>
 <div class="footer">ReVisite — Analyse documentaire et aide à la décision avant offre.</div>
-<link rel="stylesheet" href="/report-summary.css"><script src="/score-details.js"></script><script src="/report-summary.js"></script><script>
+<link rel="stylesheet" href="/report-summary.css"><script src="/score-details.js"></script><script src="/report-summary.js"></script><script src="/report-actions.js"></script><script>
 const esc=s=>String(s??'').replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));
 const arr=v=>Array.isArray(v)?v:[];
 const txt=x=>{if(typeof x==='string')return x;if(!x||typeof x!=='object')return'';if(x.claim||x.label||x.title||x.description||x.detail||x.issue||x.work||x.item)return x.claim||x.label||x.title||x.description||x.detail||x.issue||x.work||x.item;if(x.name)return x.name+(x.reason?' — '+x.reason:'');return''};

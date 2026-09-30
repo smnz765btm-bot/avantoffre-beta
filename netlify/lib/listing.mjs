@@ -1,6 +1,6 @@
 // Fixed public provider endpoint: no arbitrary URL fetch or redirect (SSRF).
 export function bieniciId(value){
- try{const u=new URL(value);return u.protocol==='https:'&&['bienici.com','www.bienici.com'].includes(u.hostname)&&!u.port&&/^\/annonce\/vente\//.test(u.pathname)&&/^[a-zA-Z0-9_-]+$/.test(u.pathname.split('/').pop())?u.pathname.split('/').pop():null}catch{return null}
+ try{const u=new URL(value);return u.protocol==='https:'&&['bienici.com','www.bienici.com'].includes(u.hostname)&&!u.port&&/^\/annonce\/vente\//.test(u.pathname)&&/^[a-zA-Z0-9_-]+$/.test(u.pathname.replace(/\/$/,'').split('/').pop())?u.pathname.replace(/\/$/,'').split('/').pop():null}catch{return null}
 }
 export function parseBienici(data,id,url){
  const price=Number(data?.price);
@@ -25,4 +25,14 @@ export function applyListing(analysis,listing){
  analysis.evidence=Array.isArray(analysis.evidence)?analysis.evidence:[];
  analysis.evidence.push({status:'FACT',claim:'Prix affiché : '+p.asking_price+' €. '+p.price_scope,source:listing.source});
  return analysis;
+}
+
+const providers=new Set(['bienici.com','www.bienici.com','seloger.com','www.seloger.com','logic-immo.com','www.logic-immo.com','leboncoin.fr','www.leboncoin.fr','adl-immo.com','www.adl-immo.com','adl-immo.fr','www.adl-immo.fr']);
+export function listingUrlSafe(raw){try{const u=new URL(raw);if(u.protocol!=='https:'||!providers.has(u.hostname)||u.port||u.username||u.password||/location|\/rent\//i.test(u.pathname))return null;u.hash='';u.search='';u.pathname=u.pathname.replace(/\/$/,'');return u.href}catch{return null}}
+export function parseListingHtml(html,url){
+ if(!listingUrlSafe(url))return null;
+ const prices=[];const add=v=>{const n=Number(String(v??'').replace(/[\s\u202f]/g,'').replace(',','.'));if(n>1000&&n<100000000)prices.push(n)};
+ for(const m of html.matchAll(/<meta\b[^>]*>/gi)){const attrs=Object.fromEntries([...m[0].matchAll(/([\w:-]+)\s*=\s*["']([^"']*)["']/g)].map(x=>[x[1].toLowerCase(),x[2]]));if(['product:price:amount','og:price:amount'].includes(attrs.property))add(attrs.content)}
+ for(const m of html.matchAll(/<script[^>]+type=["']application\/ld\+json["'][^>]*>([\s\S]*?)<\/script>/gi)){try{const data=JSON.parse(m[1]);const roots=Array.isArray(data)?data:[data];for(const root of roots.flatMap(x=>x['@graph']||[x])){if(/ItemList|BreadcrumbList/i.test(String(root['@type'])))continue;const offer=root.offers||root.mainEntity?.offers;if(offer&&!Array.isArray(offer)&&(!offer.priceCurrency||offer.priceCurrency==='EUR'))add(offer.price)}}catch{}}
+ const unique=[...new Set(prices)];return unique.length===1?{status:'ok',asking_price:unique[0],source:url,provider:new URL(url).hostname,retrieved_at:new Date().toISOString(),method:'structured_page'}:null;
 }

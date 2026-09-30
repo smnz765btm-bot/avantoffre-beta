@@ -28,7 +28,7 @@ const scored=deterministicScores({
  property:{asking_price:200000,surface_m2:82,rooms:4,dpe:'C',diagnostics:['Électricité conforme au rapport','DPE C']},
  market:{estimate_low:190000,estimate_high:210000,confidence:'bonne',dvf_reference:{sample_count:20,dispersion_ratio:1.3}}
 },fakeDocs,{officialCount:5});
-assert.equal(scored.overall,null,'L’avis global ne repose pas sur une moyenne artificielle');
+assert.equal(scored.overall,97,'La note globale applique les poids 35/30/35 aux trois parties documentées');
 assert.ok(scored.confidence>=scored.documentation*.7,'La confiance doit suivre principalement la qualité documentaire');
 
 
@@ -364,7 +364,7 @@ assert.ok(compact.reduce((s,d)=>s+d.chars_transmitted,0)<=180000,'Le mode compac
 const unassessed=deterministicScores({risk_flags:{},copro_metrics:{annual_budget:10000,cash:2000}},fakeDocs);
 assert.equal(unassessed.copro,null,'Une absence de drapeaux techniques ne signifie pas une copropriété rassurante');
 const unresolved=deterministicScores({risk_flags:{voted_major_works:false,recurring_major_technical_issue:true,litigation:false,governance_issue:false,poor_maintenance:true},works:{rejected_or_postponed:['Toiture rejetée malgré infiltrations']},copro_metrics:{annual_budget:10000,cash:2000}},fakeDocs);
-assert.ok(unresolved.copro<=64,'Des désordres majeurs non résolus doivent rester en vigilance');
+assert.ok(unresolved.copro<=70,'Des désordres majeurs non résolus doivent rester en vigilance');
 const longAndShort=prepareDocs([{name:'diagnostic.pdf',text:'D'.repeat(100000)},{name:'appel.pdf',text:'C'.repeat(1000)}]);
 assert.equal(longAndShort[0].text.length,100000,'Le budget inutilisé des pièces courtes doit conserver le diagnostic intégral');
 
@@ -393,20 +393,20 @@ assert.match(marketStrategy(200000,250000,220000),/se situe/);
 
 const partialInput={analysis:{property:{dpe:'E',diagnostics:['Plomb dégradé dans le garage'],asking_price:null},risk_flags:{electrical_anomalies:true,voted_major_works:false,recurring_major_technical_issue:false,litigation:false,governance_issue:false,poor_maintenance:false},works:{rejected_or_postponed:['Réfection de la toiture rejetée']},copro_metrics:{}},scores:{documentation:95,evidence_gate:{property:true,strong_ag:true,finance_core_count:0,market:false}}};
 const partialV2=explainScores(partialInput);
-assert.equal(partialV2.property,87,'Chaque retrait explique exactement la note du bien');
+assert.equal(partialV2.property,91,'Chaque retrait explique exactement la note du bien');
 assert.equal(partialV2.copro_status,'partial');
 assert.equal(partialV2.axes.finance,null,'Une finance inconnue n’est ni zéro ni une pénalité');
-assert.equal(partialV2.axes.works,80);
+assert.equal(partialV2.axes.works,85);
 assert.equal(partialV2.axes.governance,100);
-assert.equal(partialV2.overall,null,'Pas de moyenne globale avec des axes manquants');
+assert.equal(partialV2.overall_status,'partial');assert.equal(partialV2.overall_axes,2);assert.ok(partialV2.overall>0,'Deux axes donnent une moyenne explicitement provisoire');
 assert.equal(partialV2.market,null,'Pas de score prix sans prix demandé');
 const rescue=hardenScores({...partialInput,meta:{degraded_mode:true}});
 assert.equal(rescue.scores.property,null);assert.equal(rescue.scores.explanation,null,'Le mode de secours ne réintroduit pas de score via les explications');
 
-const nonDegraded=structuredClone(partialInput);nonDegraded.analysis.property.diagnostics=['Plomb présent dans un revêtement non dégradé'];assert.equal(explainScores(nonDegraded).property,90,'Le plomb non dégradé ne reçoit pas la pénalité du plomb dégradé');
+const nonDegraded=structuredClone(partialInput);nonDegraded.analysis.property.diagnostics=['Plomb présent dans un revêtement non dégradé'];assert.equal(explainScores(nonDegraded).property,94,'Le plomb non dégradé ne reçoit pas la pénalité du plomb dégradé');
 
-const scopeTest=structuredClone(partialInput);scopeTest.analysis.property.garage_extra=true;assert.equal(explainScores(scopeTest).property,90,'Le garage hors prix ne pénalise pas le logement');
-const dangerTest=structuredClone(scopeTest);dangerTest.analysis.property.weaknesses=['Conducteurs non protégés'];assert.equal(explainScores(dangerTest).property,85,'Un danger électrique explicite conserve une retenue supérieure');
+const scopeTest=structuredClone(partialInput);scopeTest.analysis.property.garage_extra=true;assert.equal(explainScores(scopeTest).property,94,'Le garage hors prix ne pénalise pas le logement');
+const dangerTest=structuredClone(scopeTest);dangerTest.analysis.property.weaknesses=['Conducteurs non protégés'];assert.equal(explainScores(dangerTest).property,87,'Un danger électrique explicite conserve une retenue supérieure');
 const dpeDate=extractDeterministicFacts([{name:'diagnostic.pdf',text:'DPE établi le : 22/06/2026. Classe énergétique : E.'}]);assert.equal(dpeDate.dpe_date,'22/06/2026');assert.equal(dpeDate.dpe,'E','Pas de double recalcul en 2026');
 
 const {bieniciId,parseBienici,fetchListing,applyListing}=await import('../netlify/lib/listing.mjs');
@@ -419,7 +419,7 @@ const listingOK=await fetchListing(listingURL,async()=>Response.json({id:'exampl
 assert.equal(listingOK.asking_price,349000);assert.equal(listingOK.garage_extra,true);
 assert.equal((await fetchListing(listingURL,async()=>{throw Error('unavailable')})).status,'unavailable');
 const priceInput=structuredClone(scopeTest);applyListing(priceInput.analysis,listingOK);priceInput.analysis.market={estimate_low:240000,estimate_high:321000,confidence:'moyenne',dvf_reference:{sample_count:53,dispersion_ratio:1.69}};
-assert.equal(explainScores(priceInput).market,62,'Un prix vérifié réactive le positionnement face aux références existantes');
+assert.equal(explainScores(priceInput).market,77,'Un prix vérifié réactive le positionnement face aux références existantes');
 
 const {readingPlan}=await import('../pdf-reading-policy.mjs');
 const scan74=Array.from({length:74},(_,i)=>({page:i+1,chars:0,native:''}));
@@ -452,4 +452,16 @@ const invalidSummary=globalThis.rvReportHTML({analysis:{property:{dpe_validity:'
 assert.ok(!invalidSummary.includes('Prix cohérent'));
 assert.ok(invalidSummary.includes('Obtenir les pièces de copropriété'));
 assert.ok(!invalidSummary.includes('Demander une confirmation'));
+// V3 avoids cumulative penalties for the same technical/management issue.
+const overlap=structuredClone(partialInput);overlap.analysis.risk_flags={voted_major_works:true,recurring_major_technical_issue:true,litigation:true,governance_issue:true,poor_maintenance:true};overlap.analysis.works={rejected_or_postponed:[]};
+const overlapScore=explainScores(overlap);assert.equal(overlapScore.axes.works,88);assert.equal(overlapScore.axes.governance,88);
+overlap.analysis.evidence=[{status:'FACT',claim:'Solde bancaire non restitué de 40000 €.',source:'PV.pdf'}];
+const fundsScore=explainScores(overlap);assert.equal(fundsScore.copro,70);assert.ok(fundsScore.overall<=79);assert.equal(fundsScore.financial_alert,true);
+const {parseListingHtml,listingUrlSafe}=await import('../netlify/lib/listing.mjs');
+const portal='https://www.logic-immo.com/detail-annonce/vente/test/ABC';
+assert.equal(listingUrlSafe('https://localhost/secrets'),null);assert.equal(listingUrlSafe('https://www.logic-immo.com.evil.test/x'),null);assert.equal(listingUrlSafe('https://user:pass@www.logic-immo.com/x'),null);
+assert.equal(bieniciId(listingURL+'/'),'example-123');
+assert.equal(parseListingHtml('<script type="application/ld+json">{"@type":"Apartment","offers":{"price":154000,"priceCurrency":"EUR"}}</script>',portal).asking_price,154000);
+assert.equal(parseListingHtml('<meta property="product:price:amount" content="154000"><meta property="product:price:amount" content="139000">',portal),null,'Des prix contradictoires ne sont pas devinés');
+const visual=globalThis.rvReportHTML({analysis:overlap.analysis,scores:fundsScore,meta:{}});assert.ok(visual.includes('Note globale'));assert.ok(visual.includes('Note provisoire'));assert.ok(visual.includes('Fonds de copropriété non restitués'));
 console.log('ReVisite reliability tests: OK');
