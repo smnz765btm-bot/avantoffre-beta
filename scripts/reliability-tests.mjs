@@ -448,4 +448,8 @@ assert.ok(invalidAnalysis.questions_before_offer[0].includes('ADEME'));
 const invalidScore=explainScores({analysis:invalidAnalysis,scores:{evidence_gate:{property:true}}});
 assert.equal(invalidScore.property,null,'Un DPE déclaré non valable ne permet pas de noter le logement');
 
+const invalidSummary=globalThis.rvReportHTML({analysis:{property:{dpe_validity:'invalid',asking_price:89000},market:{estimate_low:72000,estimate_high:84000},verdict:{summary:'Prix cohérent'},questions_before_offer:['Demander le DPE valide.']},scores:{},meta:{}});
+assert.ok(!invalidSummary.includes('Prix cohérent'));
+assert.ok(invalidSummary.includes('Obtenir les pièces de copropriété'));
+assert.ok(!invalidSummary.includes('Demander une confirmation'));
 console.log('ReVisite reliability tests: OK');

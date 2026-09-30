@@ -16,7 +16,9 @@ Version de test : https://deploy-preview-10--revisite-demo.netlify.app/
 
 Le PDF scanné de 74 pages fourni par le porteur du projet a été lu par le code d'extraction : 74 pages OCR, aucune page faible, 135 101 caractères utiles. Les données personnelles et le document ne sont pas inclus dans le dépôt.
 
-Valeurs retrouvées : classe affichée C, consommation 143, émissions 25 ; le document porte aussi une réserve de validité. Cette réserve doit être visible et empêcher la note du logement. La surface habitable ne doit pas être rebaptisée Carrez.
+Parcours navigateur terminé : import, OCR des 74 pages, analyse en un appel sans mode dégradé, génération et ouverture du rapport partagé. Une page pauvre en texte est signalée par l’OCR du navigateur ; 136 704 caractères ont été transmis sans coupe. La classe graphique n’a pas été reconnue avec certitude dans ce parcours : elle reste à confirmer ; les valeurs 143/25 et la non-validité sont reconnues.
+
+Valeurs retrouvées lors du contrôle local : classe affichée C, consommation 143, émissions 25 ; le document porte aussi une réserve de validité. Cette réserve doit être visible et empêcher la note du logement. La surface habitable ne doit pas être rebaptisée Carrez.
 
 ## Campagne de tests utilisateurs
 
