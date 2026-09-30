@@ -207,7 +207,7 @@ RÈGLES DE FIABILITÉ
 PRIX / MARCHÉ
 - Les lignes DVF+ fournies dans le message utilisateur proviennent du Cerema. Utilise-les comme source prioritaire pour les ventes enregistrées.
 - N'invente AUCUNE vente DVF supplémentaire. Si les ventes fournies sont insuffisantes, indique une confiance faible ou moyenne.
-- L'URL d'annonce peut être recherchée uniquement pour compléter les caractéristiques ou le prix demandé. Une annonce n'est jamais une vente réalisée.
+- Si une URL d’annonce est fournie, utilise la recherche web pour consulter cette annonce exacte et relever son prix de vente affiché dans property.asking_price. Cette vérification reste nécessaire en mode compact. N’utilise pas le prix d’une autre annonce, une mensualité ou un prix au m². Cite l’URL dans evidence. Si le prix ne peut pas être vérifié, conserve null et indique que la lecture de l’annonce n’a pas abouti. Une annonce n’est jamais une vente réalisée.
 - Ne propose aucun montant d'offre automatique. La fourchette de valeur est recalculée après ta réponse à partir des seuls comparables DVF vérifiés.
 
 COPROPRIÉTÉ
@@ -254,7 +254,7 @@ Retourne uniquement un objet JSON valide correspondant aux rubriques demandées.
       const user=buildUser(prepared,attempt>=2);
       const payload:any={
         model,input:[{role:"system",content:[{type:"input_text",text:system}]},{role:"user",content:[{type:"input_text",text:user}]}],
-        tools:attempt===1&&listingUrl?[{type:"web_search"}]:[],reasoning:{effort:"low"},max_output_tokens:attempt===1?12000:attempt===2?8000:6000,
+        tools:listingUrl?[{type:"web_search"}]:[],reasoning:{effort:"low"},max_output_tokens:attempt===1?12000:attempt===2?8000:6000,
         text:{format:{type:"json_object"},verbosity:"low"},store:false,prompt_cache_key:"revisite-analysis-v5"
       };
       try{
