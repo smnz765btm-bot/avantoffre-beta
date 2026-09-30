@@ -1,12 +1,12 @@
-import {fetchListing,parseListingHtml,listingUrlSafe,listingSources} from './listing.mjs';
+import {fetchListing,parseListingHtml,listingUrlSafe,listingSources,listingDirectAllowed} from './listing.mjs';
 import {getStore} from '@netlify/blobs';
 const digest=async s=>Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',new TextEncoder().encode(s)))).map(x=>x.toString(16).padStart(2,'0')).join('');
 export async function resolveListing(raw,{allowSearch=true}={}){
  const url=listingUrlSafe(raw);if(!url)return{status:'unsupported',source:raw};
- const store=getStore('revisite-listing-cache',{consistency:'strong'}),key=await digest('v3:'+url);
+ const store=getStore('revisite-listing-cache',{consistency:'strong'}),key=await digest('v4:'+url);
  const cached=await store.get(key,{type:'json'});if(cached&&Date.parse(cached.expires_at)>Date.now())return cached.value;
  let value=await fetchListing(url);
- if(value.status!=='ok'){
+ if(value.status!=='ok'&&listingDirectAllowed(url)){
   try{const response=await fetch(url,{redirect:'error',signal:AbortSignal.timeout(8000),headers:{Accept:'text/html'}});if(response.ok){const html=await response.text();if(html.length<2500000)value=parseListingHtml(html,url)||value}}catch{}
  }
  if(value.status!=='ok'&&allowSearch){

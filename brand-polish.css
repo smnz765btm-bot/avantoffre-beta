@@ -1,0 +1,31 @@
+/* ReVisite identity: presentation only. */
+nav{height:100px!important;border-bottom:1px solid #dce5f5!important;background:#ffffffed!important;box-shadow:0 8px 35px #18356608!important}
+nav .brand{display:flex!important;flex-direction:column;align-items:flex-start!important;gap:3px!important;text-decoration:none;line-height:1.05}
+nav .rv-wordmark{font-size:44px!important;font-weight:950;letter-spacing:-2.6px;color:#101c37}
+nav .rv-wordmark b{color:#1258ff}
+nav .rv-baseline{display:block!important;font-size:10px!important;font-weight:500;letter-spacing:1.15px;color:#697c98;margin-left:2px}
+.rv-pro-hero.hero{position:relative;isolation:isolate;overflow:hidden;padding:76px 0!important;background:radial-gradient(ellipse at 85% 30%,#345bb1 0,transparent 48%),linear-gradient(120deg,#0b142d,#192d58)!important}
+.rv-pro-hero:before{content:"";position:absolute;inset:0;z-index:-1;background-image:linear-gradient(#ffffff04 1px,transparent 1px),linear-gradient(90deg,#ffffff04 1px,transparent 1px);background-size:52px 52px;mask-image:linear-gradient(90deg,transparent,#000)}
+.rv-pro-hero:after{content:"";position:absolute;z-index:-1;width:540px;height:540px;right:-220px;top:-230px;border:1px solid #b4ccff22;border-radius:50%;box-shadow:0 0 0 60px #96b7ff06,0 0 0 120px #96b7ff04;pointer-events:none}
+.rv-pro-hero.hero h1{font-size:60px!important;letter-spacing:-2.7px!important;line-height:1.08}
+.rv-pro-hero.hero h1 span{background:linear-gradient(100deg,#b2caff,#f0f5ff);background-clip:text;-webkit-background-clip:text;color:transparent}
+.rv-pro-hero .eyebrow{color:#9bbcff!important;font-size:10px;letter-spacing:2px!important}
+.rv-preview-panel{position:relative;background:linear-gradient(130deg,#ffffff1c,#ffffff08);border-color:#ccdbff38;box-shadow:0 32px 65px #030d2938,inset 0 1px #ffffff20;animation:rv-arrive .7s ease-out both}
+.rv-preview-panel:after{content:"[re]";position:absolute;right:17px;top:13px;font-size:21px;font-weight:900;letter-spacing:-1.5px;color:#aac5ff55}
+.rv-preview-orbit{border-color:#a7c6ff66;background:radial-gradient(circle,#6691ff20,transparent 70%);position:relative}
+.rv-preview-orbit:after{content:"";position:absolute;inset:-12px;border-radius:50%;border:1px dashed #9bbcff30;animation:rv-orbit 70s linear infinite}
+.rv-preview-axes>span{transition:background .2s,transform .2s}.rv-preview-axes>span:hover{background:#ffffff18;transform:translateY(-4px)}
+.rv-start-link{background:#f5f8ff;box-shadow:0 12px 32px #0003;transition:transform .2s,box-shadow .2s}.rv-start-link:hover{box-shadow:0 16px 36px #0004}
+.inputSection{background:radial-gradient(ellipse at 8% 50%,#eaf0ff,transparent 55%);scroll-margin-top:110px}
+.rv-workspace .card{border:1px solid #e0e8f6!important;box-shadow:0 12px 38px #14316c08!important}
+.rv-workspace .sideCard{top:120px;border-top:3px solid #3974ff!important;background:linear-gradient(150deg,#fff,#f8faff)!important}
+.rv-workspace .stepNum{box-shadow:0 0 0 4px #f3f6ff}.rv-workspace .uploadIcon{box-shadow:0 8px 18px #1258ff10}
+.rv-workspace .btn{padding:18px!important}.rv-workspace .input:focus,.rv-workspace textarea:focus{border-color:#729dff!important;box-shadow:0 0 0 4px #1258ff0d!important}
+body:has(.rvSummary){background:radial-gradient(ellipse at top right,#eaf0ff,transparent 60%),#f5f7fc!important}
+.rvSummary details{transition:box-shadow .2s,border-color .2s}.rvSummary details:hover{border-color:#baccf0;box-shadow:0 5px 20px #15387606}
+a:focus-visible,button:focus-visible,summary:focus-visible{outline:3px solid #80a5ff;outline-offset:4px}
+@keyframes rv-arrive{from{opacity:0;transform:translateY(12px) rotate(0)}to{opacity:1;transform:translateY(0) rotate(2deg)}}
+@keyframes rv-orbit{to{transform:rotate(360deg)}}
+@media(max-width:760px){nav{height:88px!important}nav .rv-wordmark{font-size:37px!important}nav .rv-baseline{font-size:8px!important;letter-spacing:.8px}.rv-pro-hero.hero{padding:44px 0!important}.rv-pro-hero.hero h1{font-size:40px!important;letter-spacing:-1.7px!important}.rv-pro-hero:after{right:-420px}.rv-workspace .sideCard{position:static}.inputSection{scroll-margin-top:95px}.beta{padding:7px 9px!important}}
+@media(prefers-reduced-motion:reduce){.rv-preview-panel,.rv-preview-orbit:after{animation:none}.rv-preview-axes>span,.rv-start-link,.rvSummary details{transition:none}.rv-preview-axes>span:hover{transform:none}}
+@media print{nav{display:none!important}.rvSummary details{box-shadow:none!important}}

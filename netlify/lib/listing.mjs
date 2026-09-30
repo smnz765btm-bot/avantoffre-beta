@@ -28,7 +28,8 @@ export function applyListing(analysis,listing){
 }
 
 const providers=new Set(['bienici.com','www.bienici.com','seloger.com','www.seloger.com','logic-immo.com','www.logic-immo.com','leboncoin.fr','www.leboncoin.fr','adl-immo.com','www.adl-immo.com','adl-immo.fr','www.adl-immo.fr']);
-export function listingUrlSafe(raw){try{const u=new URL(raw);if(u.protocol!=='https:'||!providers.has(u.hostname)||u.port||u.username||u.password||/location|\/rent\//i.test(u.pathname))return null;u.hash='';u.search='';u.pathname=u.pathname.replace(/\/$/,'');return u.href}catch{return null}}
+export function listingDirectAllowed(raw){try{return providers.has(new URL(raw).hostname)}catch{return false}}
+export function listingUrlSafe(raw){try{const u=new URL(raw);if(u.protocol!=='https:'||(!/^(?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.)+[a-z]{2,63}$/i.test(u.hostname)||/\.(?:localhost|local|internal|test|invalid|example)$/i.test(u.hostname)||u.hostname.endsWith('.'))||u.port||u.username||u.password||/location|\/rent\//i.test(u.pathname))return null;u.hash='';for(const k of [...u.searchParams.keys()])if(/^(utm_|fbclid$|gclid$|q$)/i.test(k))u.searchParams.delete(k);u.pathname=u.pathname.replace(/\/$/,'');return u.href}catch{return null}}
 export function parseListingHtml(html,url){
  if(!listingUrlSafe(url))return null;
  const prices=[];const add=v=>{const n=Number(String(v??'').replace(/[\s\u202f]/g,'').replace(',','.'));if(n>1000&&n<100000000)prices.push(n)};

@@ -468,3 +468,10 @@ const {listingSources}=await import('../netlify/lib/listing.mjs');
 assert.deepEqual(listingSources([{type:'web_search_call',status:'completed',action:{type:'open_page',url:portal}}]),[portal]);
 assert.deepEqual(listingSources([{type:'web_search_call',status:'failed',action:{type:'open_page',url:portal}}]),[]);
 console.log('ReVisite reliability tests: OK');
+
+// Agency URLs use verified web lookup, never unrestricted server-side fetching.
+const {listingDirectAllowed}=await import('../netlify/lib/listing.mjs');
+assert.equal(listingUrlSafe('https://agence-immobiliere.fr/annonce?id=123&utm_source=test'),'https://agence-immobiliere.fr/annonce?id=123');
+assert.equal(listingDirectAllowed('https://agence-immobiliere.fr/annonce'),false);
+assert.equal(listingDirectAllowed('https://www.seloger.com/annonce'),true);
+for(const url of ['https://127.0.0.1/x','https://[::1]/x','http://agence.fr/x','https://service.internal/x','https://agence.fr:8443/x'])assert.equal(listingUrlSafe(url),null);
