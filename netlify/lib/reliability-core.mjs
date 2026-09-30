@@ -408,7 +408,7 @@ const dpeClassFromValues=(surface,energy,ges)=>{
 
 export function extractDeterministicFacts(docs=[]){
   const list=Array.isArray(docs)?docs:[];
-  const diagnosticDocs=list.filter(d=>{const s=docSignal(d);return s.categories.diagnostics||/DIA|diagnostic/i.test(text(d?.name))});
+  const diagnosticDocs=list.filter(d=>{const s=docSignal(d);return s.categories.diagnostics||/DIA|diagnostic|ddt|dpe/i.test(text(d?.name))});
   const chargeDocs=list.filter(d=>{const s=docSignal(d);return s.categories.charges||/d[ée]compte|appel.*fonds/i.test(text(d?.name))});
   const diag=diagnosticDocs.map(d=>text(d?.text)).join('\n');
   const charges=chargeDocs.map(d=>text(d?.text)).join('\n');
@@ -425,7 +425,7 @@ export function extractDeterministicFacts(docs=[]){
   const energyCostHigh=energyCostMatch?frNumber(energyCostMatch[2]):null;
 
   let energy=null,ges=null;
-  const explicitClassMatch=[...diag.matchAll(/(?:\bDPE\b|classe\s+[ée]nerg[ée]tique|[ée]tiquette\s+[ée]nergie)\s*(?:classe)?\s*[:=–-]?\s*([A-G])\b/gi)].find(m=>m[1]===m[1].toUpperCase());
+  const explicitClassMatch=[...diag.matchAll(/(?:\bDPE\b|classe\s+[ée]nerg[ée]tique|[ée]tiquette\s+[ée]nergie)\s*(?:classe)?\s*[:=–-]?\s*([A-G])\b/gi)].find(m=>m[1]===m[1].toUpperCase()&&!/\b(?:logements?|classes?|class[ée]s|interdiction|location|r[ée]glementation)\b/i.test(diag.slice(Math.max(0,m.index-65),m.index))&&!/^\s*(?:ou|et|à|,)\s*[A-G]\b/.test(diag.slice(m.index+m[0].length,m.index+m[0].length+20)));
   const explicitDpe=explicitClassMatch&&explicitClassMatch[1]===explicitClassMatch[1].toUpperCase()?explicitClassMatch[1]:null;
   const dpePages=diag.split(/(?=\[PAGE\s+\d+)/i).filter(x=>/DPE|performance\s+[ée]nerg[ée]tique|co[uû]ts\s+annuels\s+d['’]?[ée]nergie|logement\s+extr[eê]mement\s+performant/i.test(x));
   const zones=dpePages.length?dpePages:[diag];
@@ -456,7 +456,17 @@ export function extractDeterministicFacts(docs=[]){
       if(e>=20&&e<=700&&g>=0&&g<=150&&e>g*2){energy=e;ges=g}
     }
   }
-  const dpe=dpeClassFromValues(surface,energy,ges)||explicitDpe;
+  // Read the measured label, not F/G mentioned in general rental regulations.
+  const labelClasses=zones.flatMap(zone=>{
+    const at=zone.search(/performance\s+[ée]nerg[ée]tique\s+et\s+climatique/i);
+    if(at<0)return [];
+    const panel=zone.slice(at,at+650);
+    const match=panel.match(/\b\d{2,3}\s*[|/]\s*\d{1,3}[^\n]{0,12}[|(]\s*([A-G])\b/);
+    return match?[match[1]]:[];
+  });
+  const uniqueLabels=[...new Set(labelClasses)];
+  const dpe=uniqueLabels.length===1?uniqueLabels[0]:uniqueLabels.length>1?null:dpeClassFromValues(surface,energy,ges)||explicitDpe;
+  const dpeInvalid=zones.some(zone=>/N[°ºo]?\s*ADEME\s*:?\s*(?:absent|non d[ée]fini)/i.test(zone)&&/non valable/i.test(zone));
 
   const statements=list.filter(d=>/r[ée]partition\s+des\s+charges|d[ée]compte\s+de\s+charges/i.test(text(d?.name)))
     .sort((a,b)=>(Number(text(b?.name).match(/20\d{2}/)?.[0])||0)-(Number(text(a?.name).match(/20\d{2}/)?.[0])||0));
@@ -470,7 +480,7 @@ export function extractDeterministicFacts(docs=[]){
 
   return{
     dpe_date:zones.join(' ').match(/(?:[ée]tabli\s*le|[ée]tabli\s*le\s*:|date de r[ée]alisation)\s*:?\s*(\d{2}\/\d{2}\/20\d{2})/i)?.[1]||null,
-    surface_m2:surface,rooms,floor,dpe,energy_consumption_kwh_m2:energy,ghg_kgco2_m2:ges,
+    surface_m2:surface,rooms,floor,dpe,dpe_validity:dpeInvalid?"invalid":null,energy_consumption_kwh_m2:energy,ghg_kgco2_m2:ges,
     energy_cost_low:energyCostLow,energy_cost_high:energyCostHigh,lot_annual_charges:annualCharges,
     individual_balance:individualBalance,current_call_amount:currentCall,total_to_pay:totalToPay
   };
@@ -483,6 +493,12 @@ export function applyDeterministicFacts(analysis,docs=[]){
   if(f.floor)a.property.floor=f.floor;
   const hasDiagnosticDocs=Array.isArray(docs)&&docs.some(d=>{const s=docSignal(d);return s.categories.diagnostics||/DIA|diagnostic|DPE/i.test(text(d?.name))});
   if(f.dpe_date)a.property.dpe_date=f.dpe_date;
+  a.property.dpe_validity=f.dpe_validity;
+  if(f.dpe_validity==='invalid'){
+    const warning='Le document affiche un DPE '+(f.dpe||'à confirmer')+' mais mentionne « N° ADEME absent / non valable ». Demander le DPE enregistré et valide au diagnostiqueur.';
+    a.property.weaknesses.unshift(warning);
+    a.questions_before_offer.unshift(warning);
+  }
   if(f.dpe)a.property.dpe=f.dpe;
   else if(hasDiagnosticDocs)a.property.dpe=null;
   if(hasDiagnosticDocs&&(!f.dpe||/[EFG]/.test(f.dpe))){
@@ -778,7 +794,7 @@ export function explainScores(result){
   if(a.property?.dpe_date)notes.push('DPE établi le '+a.property.dpe_date+'. La réforme du coefficient électrique est entrée en vigueur le 01/01/2026 : aucun second abaissement automatique. Une autre étiquette nécessite un diagnostic ou une attestation vérifiable.');
 
   if(r.major_property_defect)propertyFactors.push(factor('Défaut majeur du bien documenté',-25));
-  const property=g.property===true?tally(propertyFactors):null;
+  const property=g.property===true&&a.property?.dpe_validity!=='invalid'?tally(propertyFactors):null;
   const cm=obj(a.copro_metrics),ar=num(cm.collective_arrears_ratio_pct),sr=num(cm.supplier_debt_ratio_pct);
   const financeKnown=(g.finance_core_count||0)>=2&&(ar!==null||sr!==null);
   const financeFactors=[];

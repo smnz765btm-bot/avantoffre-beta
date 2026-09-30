@@ -1,10 +1,10 @@
 import type { Context, Config } from "@netlify/functions";
-import { jobStore, expiresIn, isExpired } from "../lib/storage.mjs";
+import { jobStore, shareStore, expiresIn, isExpired } from "../lib/storage.mjs";
 
 const json=(body:any,status=200)=>new Response(JSON.stringify(body),{status,headers:{"Content-Type":"application/json; charset=utf-8","Cache-Control":"no-store"}});
 const limitEnv=(key:string,fallback:number)=>{const n=Number(Netlify.env.get(key));return Number.isFinite(n)&&n>0?Math.floor(n):fallback};
 const hash=async(value:string)=>Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256",new TextEncoder().encode(value)))).map(b=>b.toString(16).padStart(2,"0")).join("").slice(0,24);
-const CACHE_VERSION="revisite-analysis-v18";
+const CACHE_VERSION="revisite-analysis-v19";
 
 function hasUsableOpenAIKey(){
   const direct=String(Netlify.env.get("OPENAI_API_KEY")||"").trim();
@@ -77,7 +77,7 @@ export default async(req:Request,_context:Context)=>{
       const result=structuredClone(cached.result);
       const shareId=crypto.randomUUID().replace(/-/g,"").slice(0,24),shareExpiresAt=expiresIn(1000*60*60*24*14);
       result.meta={...(result.meta||{}),cache_hit:true,cache_reused_at:new Date().toISOString(),share_id:shareId,share_url:`/share.html?id=${shareId}`,share_expires_at:shareExpiresAt};
-      await store.setJSON(`share-${shareId}`,{result,shared_at:new Date().toISOString(),expires_at:shareExpiresAt});
+      await shareStore().setJSON(`share-${shareId}`,{result,shared_at:new Date().toISOString(),expires_at:shareExpiresAt});
       await Promise.allSettled(documentRefs.map(ref=>store.delete(ref)));
       return json({jobId,status:"done",cache_hit:true,result},200);
     }

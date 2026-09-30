@@ -434,3 +434,16 @@ await assert.rejects(()=>prepareCompleteDocuments([{name:'long.pdf',text:longTex
 await import('../report-summary.js');
 const summaryHTML=globalThis.rvReportHTML({analysis:{property:{address:'<img onerror=alert(1)>',dpe:'F'},documents:{},risk_flags:{}},meta:{document_quality:[{name:'DDT.pdf',quality:'partial',pages:74,weak_pages:64}]},scores:{}});
 assert.ok(summaryHTML.includes('Diagnostic à relire'));assert.ok(!summaryHTML.includes('<img'));assert.ok(!summaryHTML.includes('Fiabilité documentaire'));assert.ok(summaryHTML.includes('<details'));
+
+// Scanned small-home labels must not inherit F/G from regulatory boilerplate.
+const smallLabel={name:'DDT_scan.pdf',text:'[PAGE 1 | OCR] DPE établi le : 30/09/2023. Surface habitable : 23 m². Performance énergétique et climatique\n143|25"|(C @ )— 25\nkWh/m²/an kg CO2/m²/an\nN°ADEME absent. Non valable pour la vente.\n[PAGE 2] Les logements classés DPE F ou G sont concernés.'};
+const smallFacts=extractDeterministicFacts([smallLabel]);
+assert.equal(smallFacts.dpe,'C');
+assert.equal(smallFacts.dpe_validity,'invalid');
+assert.equal(smallFacts.surface_m2,null,'Une surface habitable ne doit pas devenir une surface Carrez');
+assert.equal(extractDeterministicFacts([{name:'DDT.pdf',text:'Les logements classés DPE F ou G sont concernés.'}]).dpe,null);
+const invalidAnalysis=applyDeterministicFacts({property:{dpe:'F'}},[smallLabel]);
+assert.equal(invalidAnalysis.property.dpe,'C');
+assert.ok(invalidAnalysis.questions_before_offer[0].includes('ADEME'));
+const invalidScore=explainScores({analysis:invalidAnalysis,scores:{evidence_gate:{property:true}}});
+assert.equal(invalidScore.property,null,'Un DPE déclaré non valable ne permet pas de noter le logement');
