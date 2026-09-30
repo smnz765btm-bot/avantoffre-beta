@@ -58,14 +58,21 @@ function splitPages(raw){
   return out;
 }
 
-function balancedExcerpt(raw,maxChars){
+function balancedExcerpt(raw,maxChars,diagnostic=false){
   if(raw.length<=maxChars)return raw;
   const pages=splitPages(raw);
   if(pages.length>1){
     const header='[EXTRACTION ÉCHANTILLONNÉE SUR TOUT LE DOCUMENT — certaines portions longues ont été condensées]\n';
     const budget=Math.max(1000,maxChars-header.length);
-    const per=Math.max(450,Math.floor(budget/pages.length));
-    const selected=pages.map(p=>p.length<=per?p:p.slice(0,Math.floor(per*.72))+'\n[…portion condensée…]\n'+p.slice(-Math.floor(per*.28)));
+    // Preserve complete conclusion/result pages before distributing the rest.
+    // Page headers and footers alone are insufficient evidence for diagnostics.
+    const keep=new Set();let used=0;
+    if(diagnostic){
+      const important=pages.map((p,i)=>({i,p,score:(/conclusion|synth[èe]se/i.test(p)?3:0)+(/comprenant des peintures|points\s+[àa]\s+examiner|r[ée]sultats?\s+des\s+mesures/i.test(p)?3:0)})).filter(x=>x.score>0).sort((a,b)=>b.score-a.score||a.i-b.i);
+      for(const x of important){if(used+x.p.length<=budget*.65){keep.add(x.i);used+=x.p.length}}
+    }
+    const per=Math.max(40,Math.floor((budget-used-pages.length*25)/Math.max(1,pages.length-keep.size)));
+    const selected=pages.map((p,i)=>keep.has(i)||p.length<=per?p:p.slice(0,Math.floor(per*.72))+'\n[…portion condensée…]\n'+p.slice(-Math.floor(per*.28)));
     let joined=header+selected.join('\n');
     if(joined.length>maxChars)joined=joined.slice(0,maxChars);
     return joined;
@@ -79,14 +86,16 @@ export function prepareDocs(docs=[],options={}){
   // Keep the model input comfortably bounded even on 20–30 document dossiers.
   // 360k characters is intentionally conservative and a compact fallback can go lower.
   const MAX_TOTAL=Math.max(90000,Number(options?.maxTotal)||360000);
-  const MAX_DOC=Math.max(12000,Number(options?.maxDoc)||50000);
+  const MAX_DOC=Math.max(12000,Number(options?.maxDoc)||180000);
   const list=Array.isArray(docs)?docs.slice(0,30):[];
   if(!list.length)return[];
-  const fairCap=Math.max(3000,Math.floor(MAX_TOTAL/list.length));
-  const cap=Math.min(MAX_DOC,fairCap);
-  return list.map(d=>{
+  const requested=list.map(d=>Math.min(MAX_DOC,text(d?.text).length));
+  const requestedTotal=requested.reduce((a,b)=>a+b,0);
+  const caps=requested.map(n=>requestedTotal>MAX_TOTAL?Math.floor(n*MAX_TOTAL/requestedTotal):n);
+  return list.map((d,i)=>{
+    const cap=caps[i];
     const raw=text(d?.text);
-    const prepared=balancedExcerpt(raw,cap);
+    const prepared=balancedExcerpt(raw,cap,/diag|ddt|dpe/i.test(text(d?.name))||/diagnostic de performance|constat de risque d.exposition au plomb/i.test(raw));
     return{
       name:text(d?.name)||'document',text:prepared,pages:num(d?.pages),quality:text(d?.quality)||undefined,
       weakPages:num(d?.weakPages),ocrPages:num(d?.ocrPages),chars_source:raw.length,chars_transmitted:prepared.length,
@@ -359,7 +368,7 @@ export function applyVerdictGuardrails(analysis,scores,documentIssues=[]){
   const a=normalizeAnalysis(analysis);
   const issues=Array.isArray(documentIssues)?documentIssues:[];
   const importantRejected=issues.filter(x=>/(?:^|[_\s.-])(?:ag|pv)(?:[_\s.-]|$)|assembl|rcp|r[èe]glement.*copro|[ée]tat\s+descriptif|annexe\s+comptable/i.test(String(x?.name||'')));
-  const coproUnsupported=scores?.evidence_gate?.copro===false||scores?.copro===null||scores?.copro===undefined;
+  const coproUnsupported=scores?.copro_status==='partial'||scores?.evidence_gate?.copro===false||scores?.copro===null||scores?.copro===undefined;
   const incomplete=Boolean(a?.risk_flags?.copro_documents_incomplete)||importantRejected.length>=2;
   if((coproUnsupported||incomplete)&&/(?:favorable|rassurant|serein|feu\s+vert|bon\s+dossier)/i.test(text(a.verdict.label))){
     a.verdict.label='À approfondir avant offre';
@@ -371,14 +380,17 @@ export function applyVerdictGuardrails(analysis,scores,documentIssues=[]){
 }
 
 export function hardenScores(result){
+  if(result?.analysis&&result?.scores&&result.scores.revision!==4)result.scores=explainScores(result);
   const s=result?.scores;if(!s)return result;
   s.property=scoreNum(s.property);s.copro=scoreNum(s.copro);s.market=scoreNum(s.market);
   s.documentation=scoreNum(s.documentation);s.confidence=scoreNum(s.confidence);
   const meta=result?.meta||{};
+  if(meta.degraded_mode){s.property=null;s.copro=null;s.market=null;s.overall=null;s.explanation=null;s.copro_status="unknown";}
   const allAxesKnown=s.property!==null&&s.copro!==null&&s.market!==null;
   const enoughDocs=s.documentation!==null&&s.documentation>=60;
   const enoughConfidence=s.confidence!==null&&s.confidence>=60;
-  s.overall=Boolean(meta.score_withheld)||!allAxesKnown||!enoughDocs||!enoughConfidence?null:scoreNum(s.overall);
+  s.overall=meta.degraded_mode?null:scoreNum(s.overall);
+  if(result.meta)result.meta.score_withheld=s.overall===null;
   const conf=s.confidence;
   s.confidence_label=conf===null?"faible":conf>=85?"très bonne":conf>=70?"bonne":conf>=55?"moyenne":conf>=40?"limitée":"faible";
   return result;
@@ -397,7 +409,7 @@ const dpeClassFromValues=(surface,energy,ges)=>{
 
 export function extractDeterministicFacts(docs=[]){
   const list=Array.isArray(docs)?docs:[];
-  const diagnosticDocs=list.filter(d=>{const s=docSignal(d);return s.categories.diagnostics||/DIA|diagnostic/i.test(text(d?.name))});
+  const diagnosticDocs=list.filter(d=>{const s=docSignal(d);return s.categories.diagnostics||/DIA|diagnostic|ddt|dpe/i.test(text(d?.name))});
   const chargeDocs=list.filter(d=>{const s=docSignal(d);return s.categories.charges||/d[ée]compte|appel.*fonds/i.test(text(d?.name))});
   const diag=diagnosticDocs.map(d=>text(d?.text)).join('\n');
   const charges=chargeDocs.map(d=>text(d?.text)).join('\n');
@@ -414,10 +426,13 @@ export function extractDeterministicFacts(docs=[]){
   const energyCostHigh=energyCostMatch?frNumber(energyCostMatch[2]):null;
 
   let energy=null,ges=null;
-  const explicitClassMatch=diag.match(/(?:\bDPE\b|classe\s+[ée]nerg[ée]tique|[ée]tiquette\s+[ée]nergie)\s*(?:classe)?\s*[:=–-]?\s*([A-G])\b/i);
-  const explicitDpe=explicitClassMatch?String(explicitClassMatch[1]).toUpperCase():null;
+  const explicitClassMatch=[...diag.matchAll(/(?:\bDPE\b|classe\s+[ée]nerg[ée]tique|[ée]tiquette\s+[ée]nergie)\s*(?:classe)?\s*[:=–-]?\s*([A-G])\b/gi)].find(m=>m[1]===m[1].toUpperCase()&&!/\b(?:logements?|classes?|class[ée]s|interdiction|location|r[ée]glementation)\b/i.test(diag.slice(Math.max(0,m.index-65),m.index))&&!/^\s*(?:ou|et|à|,)\s*[A-G]\b/.test(diag.slice(m.index+m[0].length,m.index+m[0].length+20)));
+  const explicitDpe=explicitClassMatch&&explicitClassMatch[1]===explicitClassMatch[1].toUpperCase()?explicitClassMatch[1]:null;
   const dpePages=diag.split(/(?=\[PAGE\s+\d+)/i).filter(x=>/DPE|performance\s+[ée]nerg[ée]tique|co[uû]ts\s+annuels\s+d['’]?[ée]nergie|logement\s+extr[eê]mement\s+performant/i.test(x));
   const zones=dpePages.length?dpePages:[diag];
+  // The DPE can show both current and post-works values. The current state wins.
+  const current=zones.join('\n').match(/[ée]tat\s+actuel[\s\S]{0,130}?consommation\s*:\s*(\d{2,3})\s*kwh[\s\S]{0,100}?[ée]missions\s*:\s*(\d{1,3})\s*kg/i);
+  if(current){energy=Number(current[1]);ges=Number(current[2])}
   for(const zone of zones){
     if(energy!==null&&ges!==null)break;
     const unitPair=zone.match(/\b(\d{2,3})\s*(?:kwh|kw\s*h)[^\d]{0,80}(\d{1,3})\s*(?:kg\s*(?:co2|co₂)|kgco2)/i);
@@ -425,29 +440,48 @@ export function extractDeterministicFacts(docs=[]){
       const e=Number(unitPair[1]),g=Number(unitPair[2]);
       if(e>=20&&e<=700&&g>=0&&g<=150&&e>g*2){energy=e;ges=g;break}
     }
-    const perf=zone.match(/(?:performance\s+[ée]nerg[ée]tique(?:\s+et\s+climatique)?|consommation\s+[ée]nerg[ée]tique)([\s\S]{0,2600})/i);
-    const sample=perf?.[1]||zone;
-    const nums=[...sample.matchAll(/\b(\d{1,3})\b/g)].map(m=>Number(m[1])).filter(Number.isFinite);
-    const pairs=[];
-    for(let i=0;i<nums.length-1;i++){
-      const e=nums[i],g=nums[i+1];
-      if(e>=50&&e<=500&&g>=1&&g<=100&&e>g*3)pairs.push([e,g]);
+    const labelAt=zone.search(/performance\s+[ée]nerg[ée]tique\s+et\s+climatique/i);
+    if(labelAt>=0){
+      const labelWindow=zone.slice(labelAt,labelAt+650);
+      const ocrPair=labelWindow.match(/\b(\d{2,3})\s*[|/]\s*(\d{1,3})\b[\s\S]{0,80}?kwh[^\n]{0,80}kg\s*co/i)||labelWindow.match(/consommation\s*(\d{2,3})\s*[|/]\s*(\d{1,3})\b/i);
+      if(ocrPair){
+        const e=Number(ocrPair[1]),g=Number(ocrPair[2]);
+        if(e>=20&&e<=700&&g>=0&&g<=150&&e>g*2){energy=e;ges=g;break}
+      }
     }
-    if(pairs.length){
-      pairs.sort((a,b)=>(b[0]/Math.max(1,b[1]))-(a[0]/Math.max(1,a[1])));
-      [energy,ges]=pairs[0];
+    // OCR may return only the two numbers on the DPE label. Accept them only
+    // immediately after the label, not arbitrary figures elsewhere in a 96-page diagnosis.
+    const labelPair=zone.match(/performance\s+[ée]nerg[ée]tique\s+et\s+climatique\s*[:–-]?\s*(\d{2,3})\s+(\d{1,3})\b/i);
+    if(labelPair){
+      const e=Number(labelPair[1]),g=Number(labelPair[2]);
+      if(e>=20&&e<=700&&g>=0&&g<=150&&e>g*2){energy=e;ges=g}
     }
   }
-  const dpe=dpeClassFromValues(surface,energy,ges)||explicitDpe;
+  // Read the measured label, not F/G mentioned in general rental regulations.
+  const labelClasses=zones.flatMap(zone=>{
+    const at=zone.search(/performance\s+[ée]nerg[ée]tique\s+et\s+climatique/i);
+    if(at<0)return [];
+    const panel=zone.slice(at,at+650);
+    const match=panel.match(/\b\d{2,3}\s*[|/]\s*\d{1,3}[^\n]{0,12}[|(]\s*([A-G])\b/);
+    return match?[match[1]]:[];
+  });
+  const uniqueLabels=[...new Set(labelClasses)];
+  const dpe=uniqueLabels.length===1?uniqueLabels[0]:uniqueLabels.length>1?null:dpeClassFromValues(surface,energy,ges)||explicitDpe;
+  const dpeInvalid=zones.some(zone=>/N[°ºo]?\s*ADEME\s*:?\s*(?:absent|non d[ée]fini)/i.test(zone)&&/non valable/i.test(zone));
 
+  const statements=list.filter(d=>/r[ée]partition\s+des\s+charges|d[ée]compte\s+de\s+charges/i.test(text(d?.name)))
+    .sort((a,b)=>(Number(text(b?.name).match(/20\d{2}/)?.[0])||0)-(Number(text(a?.name).match(/20\d{2}/)?.[0])||0));
+  const latestStatement=statements[0]?text(statements[0].text):'';
   const annualCharges=
+    firstMatchNumber(latestStatement,/montant\s+total\s+des\s+d[ée]penses\s*:\s*(\d{1,3}(?:\s\d{3})*(?:[.,]\d{2}))\s*€/i) ??
     firstMatchNumber(charges,/total\s+des\s+charges\s+sur\s+cette\s+p[ée]riode[\s\S]{0,220}?(\d{3,6}(?:[.,]\d{2}))/i);
   const individualBalance=firstMatchNumber(charges,/solde\s+d[ée]biteur\s+(\d{1,6}(?:[.,]\d{2}))/i);
   const currentCall=firstMatchNumber(charges,/montant\s+de\s+l['’]?appel\s+de\s+fonds\s+(\d{1,6}(?:[.,]\d{2}))/i);
   const totalToPay=firstMatchNumber(charges,/total\s+[àa]\s+payer\s+(\d{1,6}(?:[.,]\d{2}))/i);
 
   return{
-    surface_m2:surface,rooms,floor,dpe,energy_consumption_kwh_m2:energy,ghg_kgco2_m2:ges,
+    dpe_date:zones.join(' ').match(/(?:[ée]tabli\s*le|[ée]tabli\s*le\s*:|date de r[ée]alisation)\s*:?\s*(\d{2}\/\d{2}\/20\d{2})/i)?.[1]||null,
+    surface_m2:surface,rooms,floor,dpe,dpe_validity:dpeInvalid?"invalid":null,energy_consumption_kwh_m2:energy,ghg_kgco2_m2:ges,
     energy_cost_low:energyCostLow,energy_cost_high:energyCostHigh,lot_annual_charges:annualCharges,
     individual_balance:individualBalance,current_call_amount:currentCall,total_to_pay:totalToPay
   };
@@ -459,8 +493,20 @@ export function applyDeterministicFacts(analysis,docs=[]){
   if(f.rooms!==null)a.property.rooms=f.rooms;
   if(f.floor)a.property.floor=f.floor;
   const hasDiagnosticDocs=Array.isArray(docs)&&docs.some(d=>{const s=docSignal(d);return s.categories.diagnostics||/DIA|diagnostic|DPE/i.test(text(d?.name))});
+  if(f.dpe_date)a.property.dpe_date=f.dpe_date;
+  a.property.dpe_validity=f.dpe_validity;
+  if(f.dpe_validity==='invalid'){
+    const warning='Le document affiche un DPE '+(f.dpe||'à confirmer')+' mais mentionne « N° ADEME absent / non valable ». Demander le DPE enregistré et valide au diagnostiqueur.';
+    a.property.weaknesses.unshift(warning);
+    a.questions_before_offer.unshift(warning);
+  }
   if(f.dpe)a.property.dpe=f.dpe;
   else if(hasDiagnosticDocs)a.property.dpe=null;
+  if(hasDiagnosticDocs&&(!f.dpe||/[EFG]/.test(f.dpe))){
+    const energyPraise=x=>/\bDPE\b|performance[s]?\s+[ée]nerg[ée]tique/i.test(text(x));
+    a.property.assets=a.property.assets.filter(x=>!energyPraise(x));
+    a.executive_summary.top_strengths=a.executive_summary.top_strengths.filter(x=>!energyPraise(x));
+  }
   if(f.energy_consumption_kwh_m2!==null)a.property.energy_consumption_kwh_m2=f.energy_consumption_kwh_m2;
   else if(hasDiagnosticDocs)a.property.energy_consumption_kwh_m2=null;
   if(f.ghg_kgco2_m2!==null)a.property.ghg_kgco2_m2=f.ghg_kgco2_m2;
@@ -656,7 +702,7 @@ export function applyOfficialMarketData(analysis,candidates=[]){
   return a;
 }
 
-export function deterministicScores(a,docs=[],marketMeta={}){
+function legacyScores(a,docs=[],marketMeta={}){
   const r=obj(a?.risk_flags),coverage=documentCoverage(docs),documentation=coverage.score;
   let property=82;
   if(r.electrical_anomalies)property-=5;if(r.major_property_defect)property-=12;if(r.no_elevator_high_floor)property-=6;if(r.poor_dpe)property-=8;if(r.sold_occupied)property-=2;if(r.no_parking_when_expected)property-=3;if(r.strong_property_assets)property+=4;property=clamp(property);
@@ -669,7 +715,8 @@ export function deterministicScores(a,docs=[],marketMeta={}){
   let works=25;if(r.voted_major_works)works-=10;if(r.pppt_significant_medium_term)works-=6;if(r.recurring_major_technical_issue)works-=5;if(r.recent_major_works_completed)works+=2;works=clamp(works,0,25);
   let governance=20;if(r.litigation)governance-=5;if(r.governance_issue)governance-=6;if(r.asl_active)governance-=2;governance=clamp(governance,0,20);
   let technical=15;if(r.poor_maintenance)technical-=6;if(r.recurring_major_technical_issue)technical-=4;if(r.recent_major_works_completed)technical+=2;technical=clamp(technical,0,15);
-  const copro=Math.round(finance+works+governance+technical);
+  const unresolvedMajorIssue=r.recurring_major_technical_issue&&arr(a?.works?.rejected_or_postponed).length>0;
+  const copro=Math.min(unresolvedMajorIssue?64:100,Math.round(finance+works+governance+technical));
 
   let market=55;const ask=num(a?.property?.asking_price),lo=num(a?.market?.estimate_low),hi=num(a?.market?.estimate_high);
   if(ask&&lo&&hi&&lo<=hi){if(ask>=lo&&ask<=hi)market=84;else if(ask<lo)market=88;else market=clamp(Math.round(84-((ask-hi)/hi*100)*2.5),35,84)}
@@ -693,7 +740,8 @@ export function deterministicScores(a,docs=[],marketMeta={}){
   const financeCoreCount=["annual_budget","collective_arrears","supplier_debt","cash","works_fund"].filter(k=>num(coproMetrics?.[k])!==null).length;
   // A charge statement or a document merely classified as "accounts" is not enough:
   // at least two core collective financial metrics must actually be extracted.
-  const coproEvidence=strongAg&&financeCoreCount>=2;
+  const risksAssessed=['voted_major_works','recurring_major_technical_issue','litigation','governance_issue','poor_maintenance'].every(k=>typeof r[k]==='boolean');
+  const coproEvidence=strongAg&&financeCoreCount>=2&&risksAssessed;
   const dvfRef=obj(a?.market?.dvf_reference);
   const marketSampleCount=Math.max(officialCount,Number(dvfRef.sample_count)||0);
   const dispersionRatio=num(dvfRef.dispersion_ratio);
@@ -717,3 +765,85 @@ export function deterministicScores(a,docs=[],marketMeta={}){
   };
 }
 
+export function marketStrategy(low,high,price){
+  if(num(price)===null)return "Prix demandé non établi : impossible de le positionner face aux ventes DVF. Complétez le prix avant de fixer une offre.";
+  if(num(low)===null||num(high)===null)return "Ne pas fixer de montant d'offre automatique sans références de marché vérifiées.";
+  if(price>high)return "Le prix affiché est au-dessus de la fourchette DVF indicative. Fonder la négociation sur les écarts documentés du bien, de la copropriété et des travaux.";
+  if(price<low)return "Le prix affiché est sous la fourchette DVF indicative. Vérifier les pièces techniques et de copropriété avant de fixer une offre.";
+  return "Le prix affiché se situe dans la fourchette DVF indicative. Valider les pièces techniques et de copropriété avant de fixer une offre.";
+}
+
+// Transparent beta risk index: unknown information affects coverage, never penalties.
+export function explainScores(result){
+  const a=obj(result?.analysis),old=obj(result?.scores),g=obj(old.evidence_gate),r=obj(a.risk_flags);
+  const assessed=['voted_major_works','recurring_major_technical_issue','litigation','governance_issue','poor_maintenance'].every(k=>typeof r[k]==='boolean');
+  const factor=(label,points)=>({label,points});
+  const tally=items=>Math.max(0,100+items.reduce((n,x)=>n+x.points,0));
+  const propertyFactors=[];const dpe=text(a.property?.dpe).toUpperCase();
+  const energyPenalty={D:1,E:3,F:12,G:22}[dpe]||0;
+  if(energyPenalty)propertyFactors.push(factor('Performance énergétique : DPE '+dpe,-energyPenalty));
+  const safetyText=[...arr(a.property?.diagnostics),...arr(a.property?.weaknesses)].map(x=>text(x)).join(' ');
+  const electricDanger=/contacts? directs?|conducteurs? non protégés|risque d[’\x27]électrocution/i.test(safetyText);
+  if(r.electrical_anomalies)propertyFactors.push(factor(electricDanger?'Anomalies électriques avec danger explicitement décrit — mise en sécurité à chiffrer':'Anomalies électriques documentées — gravité et coût à préciser',electricDanger?-10:-3));
+  const diagnosis=arr(a.property?.diagnostics).map(x=>text(x)||text(x?.description)).join(' ');
+  const leadParts=diagnosis.split(/[.;]/).filter(part=>/plomb.{0,130}dégrad|revêtements?.{0,80}dégrad.{0,80}plomb/i.test(part)&&!/absence de plomb|pas de plomb|non[ -]dégrad|sans.{0,30}dégrad/i.test(part));
+  const garageOnly=leadParts.length>0&&leadParts.every(part=>/garage/i.test(part)&&!/chambre|séjour|cuisine|salon/i.test(part));
+  const leadOutsideScope=garageOnly&&a.property?.garage_extra===true;
+  if(leadParts.length&&!leadOutsideScope)propertyFactors.push(factor(garageOnly?'Plomb dégradé localisé au garage — traitement à prévoir':'Plomb dégradé documenté — localisation et traitement à préciser',garageOnly?-3:-8));
+  const notes=[];
+  if(leadOutsideScope)notes.push('Plomb dégradé au garage : alerte conservée, sans retrait sur l’appartement car le garage est proposé en supplément. Réévaluer si le garage est inclus dans votre achat.');
+  if(a.property?.dpe_date)notes.push('DPE établi le '+a.property.dpe_date+'. La réforme du coefficient électrique est entrée en vigueur le 01/01/2026 : aucun second abaissement automatique. Une autre étiquette nécessite un diagnostic ou une attestation vérifiable.');
+
+  if(r.major_property_defect)propertyFactors.push(factor('Défaut majeur du bien documenté',-25));
+  const property=g.property===true&&a.property?.dpe_validity!=='invalid'?tally(propertyFactors):null;
+  const cm=obj(a.copro_metrics),ar=num(cm.collective_arrears_ratio_pct),sr=num(cm.supplier_debt_ratio_pct);
+  const financeKnown=(g.finance_core_count||0)>=2&&(ar!==null||sr!==null);
+  const financeFactors=[];
+  if(ar!==null&&ar>8)financeFactors.push(factor('Impayés collectifs : '+ar+' % du budget',ar>25?-40:ar>15?-25:-10));
+  if(sr!==null&&sr>8)financeFactors.push(factor('Dette fournisseurs : '+sr+' % du budget',sr>15?-20:-10));
+  const worksKnown=g.strong_ag===true&&assessed,governanceKnown=worksKnown;
+  const workFactors=[];
+  const rejected=arr(a.works?.rejected_or_postponed).map(x=>text(x)||text(x?.description)).join(' ');
+  const rejectedMajor=/toiture|façade|structure|étanchéité|ascenseur/i.test(rejected);
+  // One technical deduction: recurring issue, maintenance and related votes may describe the same problem.
+  if(rejectedMajor)workFactors.push(factor('Travaux structurels reportés — besoin à confirmer',-15));
+  else if(r.recurring_major_technical_issue)workFactors.push(factor('Problème technique récurrent à résoudre',-12));
+  else if(r.poor_maintenance)workFactors.push(factor('Entretien à remettre à niveau',-8));
+  // A maintenance vote is a management action, not automatically a defect or a buyer debt.
+  const governanceFactors=[];
+  if(r.governance_issue)governanceFactors.push(factor('Gestion à sécuriser, procédures incluses',-12));
+  else if(r.litigation)governanceFactors.push(factor('Procédure à suivre — issue et coût à préciser',-8));
+  const dimensions=[
+    {key:'finance',label:'Finances',weight:40,value:financeKnown?tally(financeFactors):null,factors:financeFactors,missing:'État financier collectif et ratios d’impayés/dettes à obtenir.'},
+    {key:'works',label:'Travaux et état technique',weight:40,value:worksKnown?tally(workFactors):null,factors:workFactors,missing:'PV lisibles et évaluation des risques techniques nécessaires.'},
+    {key:'governance',label:'Gouvernance',weight:20,value:governanceKnown?tally(governanceFactors):null,factors:governanceFactors,missing:'PV lisibles et évaluation de la gouvernance nécessaires.'}
+  ];
+  const known=dimensions.filter(x=>x.value!==null),weight=known.reduce((n,x)=>n+x.weight,0);
+  const partial=known.length>0&&known.length<dimensions.length;
+  let copro=weight?Math.round(known.reduce((n,x)=>n+x.value*x.weight,0)/weight):null;
+  const financialEvidence=arr(a.evidence).filter(e=>e?.status==='FACT').map(e=>text(e.claim)).join(' ');
+  const financialAlert=/(?:fonds|solde|trésorerie|bancaire)[^.!?]{0,100}(?:non restitu|perd|perte|détourn)|(?:perte|détourn)[^.!?]{0,100}(?:fonds|trésorerie)/i.test(financialEvidence);
+  const capped=Boolean(r.recurring_major_technical_issue&&rejectedMajor);
+  if(copro!==null&&capped)copro=Math.min(70,copro);
+  if(copro!==null&&financialAlert)copro=Math.min(70,copro);
+  const ask=num(a.property?.asking_price),lo=num(a.market?.estimate_low),hi=num(a.market?.estimate_high),ref=obj(a.market?.dvf_reference);
+  const marketReady=ask>0&&lo>0&&hi>=lo&&Math.max(Number(g.official_count)||0,Number(ref.sample_count)||0)>=8&&text(a.market?.confidence)!=='faible'&&(num(ref.dispersion_ratio)===null||num(ref.dispersion_ratio)<=1.8);
+  const market=marketReady?(ask<=hi?90:Math.max(35,Math.round(90-((ask-hi)/hi*100)*1.5))):null;
+  const globalAxes=[{key:'property',value:property,weight:35},{key:'market',value:market,weight:30},{key:'copro',value:copro,weight:35}];
+  const available=globalAxes.filter(x=>x.value!==null),globalWeight=available.reduce((n,x)=>n+x.weight,0);
+  let overall=available.length>=2?Math.round(available.reduce((n,x)=>n+x.value*x.weight,0)/globalWeight):null;
+  if(overall!==null&&(financialAlert||r.major_property_defect||electricDanger))overall=Math.min(79,overall);
+  const overallStatus=overall===null?'unknown':available.length<3||partial?'partial':'complete';
+  return {...old,version:3,revision:4,property,copro,market,overall,overall_status:overallStatus,overall_axes:available.length,financial_alert:financialAlert,
+    copro_status:partial?'partial':known.length===3?'complete':'unknown',
+    evidence_gate:{...g,property:property!==null,copro:copro!==null,copro_complete:known.length===3,market:market!==null},
+    axes:Object.fromEntries(dimensions.map(x=>[x.key,x.value])),
+    explanation:{method:'Indice ReVisite : plus la note est haute, moins les éléments évalués présentent d’alertes. Risques liés regroupés, entretien courant non pénalisé. Informations absentes exclues du calcul ; elles restent à vérifier.',
+      property:{base:100,value:property,factors:propertyFactors,notes,missing:'Surface, typologie, DPE et conclusions de diagnostics nécessaires.'},
+      copro:{value:copro,partial,coverage_weight:weight,dimensions,capped,financial_alert:financialAlert,confidence:partial?'Limitée : finances ou autres axes incomplets.':known.length===3?'Étendue aux trois axes, selon les pièces reçues.':'Insuffisante pour évaluer la copropriété.'},
+      market:{value:market,asking_price:num(a.property?.asking_price),scope:a.property?.price_scope||'',reason:num(a.property?.asking_price)===null?'Prix demandé manquant : renseignez-le pour évaluer son positionnement.':market===null?'Références DVF insuffisantes ou trop dispersées.':'Positionnement du prix demandé face à la fourchette DVF vérifiée ; ce score ne mesure pas la qualité technique.'},
+      overall:'Moyenne pondérée : logement 35 %, prix 30 %, copropriété 35 %. Au moins deux parties évaluées ; poids recalculés sur les parties connues. Note provisoire si le dossier est incomplet. Une alerte financière majeure ou de sécurité plafonne la note globale à 79.'}
+  };
+}
+
+export function deterministicScores(a,docs=[],marketMeta={}){return explainScores({analysis:a,scores:legacyScores(a,docs,marketMeta)});}

@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import {documentCoverage,prepareDocs,normalizeAnalysis,extractDeterministicFacts,applyDeterministicFacts,applyDeterministicGuardrails,applyVerdictGuardrails,parseStaticDvfCsv,selectOfficialComparables,applyOfficialMarketData,deterministicScores,hardenScores,num} from '../netlify/lib/reliability-core.mjs';
+import {documentCoverage,explainScores,marketStrategy,prepareDocs,normalizeAnalysis,extractDeterministicFacts,applyDeterministicFacts,applyDeterministicGuardrails,applyVerdictGuardrails,parseStaticDvfCsv,selectOfficialComparables,applyOfficialMarketData,deterministicScores,hardenScores,num} from '../netlify/lib/reliability-core.mjs';
 import {partitionUploadDocuments} from '../netlify/lib/upload-core.mjs';
 
 assert.equal(num(null),null,'Une valeur nulle doit rester inconnue et ne jamais devenir zéro');
@@ -23,12 +23,12 @@ const fakeDocs=[
 const cov=documentCoverage(fakeDocs);
 assert.ok(cov.score>=50,'Un dossier immobilier correctement documenté doit pouvoir franchir le seuil de couverture');
 const scored=deterministicScores({
- risk_flags:{},
+ risk_flags:{voted_major_works:false,recurring_major_technical_issue:false,litigation:false,governance_issue:false,poor_maintenance:false},
  copro_metrics:{annual_budget:140000,collective_arrears:5000,cash:45000,works_fund:30000},
  property:{asking_price:200000,surface_m2:82,rooms:4,dpe:'C',diagnostics:['Électricité conforme au rapport','DPE C']},
  market:{estimate_low:190000,estimate_high:210000,confidence:'bonne',dvf_reference:{sample_count:20,dispersion_ratio:1.3}}
 },fakeDocs,{officialCount:5});
-assert.ok(scored.overall!==null,'Le score global est autorisé lorsque la couverture est suffisante');
+assert.equal(scored.overall,97,'La note globale applique les poids 35/30/35 aux trois parties documentées');
 assert.ok(scored.confidence>=scored.documentation*.7,'La confiance doit suivre principalement la qualité documentaire');
 
 
@@ -220,6 +220,19 @@ const ocrFacts=extractDeterministicFacts(ocrLikeDpeDoc);
 assert.equal(ocrFacts.dpe,'B','Le DPE graphique OCRisé doit être recalculé B à partir de 106/3');
 assert.equal(ocrFacts.energy_consumption_kwh_m2,106);
 assert.equal(ocrFacts.ghg_kgco2_m2,3);
+const unlabelledDpeNumbers=extractDeterministicFacts([{name:'Diag.pdf',quality:'partial',text:'[PAGE 5 | NATIVE] Sommaire du dossier DPE 96 pages. Mesures plomb 109 2 et référence 520 6.'}]);
+assert.equal(unlabelledDpeNumbers.dpe,null,'Des chiffres sans unité ni étiquette DPE ne doivent jamais créer une classe énergétique');
+const montesquieuDpe=extractDeterministicFacts([{name:'Diag(1).pdf',quality:'partial',text:'[PAGE 6 | OCR] Performance énergétique et climatique logement extrêmement performant *Dont émissions de gaz à effet de serre consommation (énergie primaire) émissions 269| 10" kWh/mé/an | kg CO,/mé/an'}]);
+assert.equal(montesquieuDpe.energy_consumption_kwh_m2,269,'Les valeurs OCR de la page DPE doivent être reconnues malgré la mise en page');
+assert.equal(montesquieuDpe.ghg_kgco2_m2,10);
+const currentVsWorks=extractDeterministicFacts([{name:'Diag(1).pdf',quality:'partial',text:'Superficie Carrez : 73,90 m² [PAGE 11 | OCR] DPE Évolution de la performance après travaux avec travaux consommation: 168 kwh/m²/an émissions: 6 kg CO2/m²/an état actuel consommation: 269 kwh/m²/an émissions: 10 kg CO2/m²/an'}]);
+assert.equal(currentVsWorks.dpe,'E','Le DPE actuel doit primer sur la projection après travaux');
+assert.equal(currentVsWorks.energy_consumption_kwh_m2,269);
+const montesquieuCharges=extractDeterministicFacts([
+ {name:'Répartition des charges courantes - Exercice 2024.pdf',text:'Montant total des dépenses : 1 120,42 €',quality:'ok'},
+ {name:'Répartition des charges courantes - Exercice 2025.pdf',text:'Montant total des dépenses : 850,77 € Montant total des provisions appelées : 1 351,23 €',quality:'ok'}
+]);
+assert.equal(montesquieuCharges.lot_annual_charges,850.77,'Les dépenses du dernier exercice doivent primer sur les provisions et l’exercice précédent');
 const correctedDpe=applyDeterministicFacts({property:{surface_m2:83.44,rooms:4,dpe:'A'},copro_metrics:{}},ocrLikeDpeDoc);
 assert.equal(correctedDpe.property.dpe,'B','Un DPE IA erroné doit être écrasé par les valeurs OCR vérifiables');
 const unverifiedDpe=applyDeterministicFacts({property:{surface_m2:83.44,rooms:4,dpe:'A'},copro_metrics:{}},[
@@ -317,9 +330,12 @@ assert.equal(mixedUpload.rejected.length,1,'Le PDF illisible doit être signalé
 assert.equal(mixedUpload.accepted[0].name,'diagnostics.pdf');
 assert.equal(mixedUpload.rejected[0].name,'plan.pdf');
 assert.equal(mixedUpload.rejected[0].accepted,false);
+const blankPdf=partitionUploadDocuments([{index:0,name:'scan-vide.pdf',quality:'ok',pages:5,extractedChars:500,text:Array.from({length:5},(_,i)=>`[PAGE ${i+1} | NATIVE]`).join('\n')}]);
+assert.equal(blankPdf.accepted.length,0,'Les marqueurs de pages ne constituent pas du texte documentaire exploitable');
+assert.equal(blankPdf.rejected[0].quality,'failed');
 
 const readableGraphicalPlan=partitionUploadDocuments([{
-  index:0,name:'PLAN_APT_B12.pdf',text:'[DOCUMENT GRAPHIQUE] T3 62,3 m2',quality:'partial',pages:1,weakPages:1,
+  index:0,name:'PLAN_APT_B12.pdf',text:'[DOCUMENT GRAPHIQUE] Appartement T3, surface 62,3 m2',quality:'partial',pages:1,weakPages:1,
   documentKind:'graphical',extractedChars:24
 }]);
 assert.equal(readableGraphicalPlan.accepted.length,1,'Un plan avec un peu de texte OCR réellement détecté doit rester exploitable comme référence graphique');
@@ -340,7 +356,122 @@ const unreadableGraphicalPlan=partitionUploadDocuments([{
 assert.equal(unreadableGraphicalPlan.accepted.length,0,'Un plan sans texte réellement détecté ne doit pas être déclaré exploitable');
 assert.equal(unreadableGraphicalPlan.rejected.length,1);
 
-console.log('ReVisite reliability tests: OK');
+
 
 const compact=prepareDocs(many,{maxTotal:180000,maxDoc:30000});
 assert.ok(compact.reduce((s,d)=>s+d.chars_transmitted,0)<=180000,'Le mode compact doit réduire fortement le contexte');
+
+const unassessed=deterministicScores({risk_flags:{},copro_metrics:{annual_budget:10000,cash:2000}},fakeDocs);
+assert.equal(unassessed.copro,null,'Une absence de drapeaux techniques ne signifie pas une copropriété rassurante');
+const unresolved=deterministicScores({risk_flags:{voted_major_works:false,recurring_major_technical_issue:true,litigation:false,governance_issue:false,poor_maintenance:true},works:{rejected_or_postponed:['Toiture rejetée malgré infiltrations']},copro_metrics:{annual_budget:10000,cash:2000}},fakeDocs);
+assert.ok(unresolved.copro<=70,'Des désordres majeurs non résolus doivent rester en vigilance');
+const longAndShort=prepareDocs([{name:'diagnostic.pdf',text:'D'.repeat(100000)},{name:'appel.pdf',text:'C'.repeat(1000)}]);
+assert.equal(longAndShort[0].text.length,100000,'Le budget inutilisé des pièces courtes doit conserver le diagnostic intégral');
+
+const diagnosticPages=Array.from({length:96},(_,i)=>`[PAGE ${i+1} | TEXT]\n`+'En-tête et méthodologie. '.repeat(50)+(i===35?'Conclusion du constat : présence de plomb dans un revêtement dégradé. ':i===37?'Comprenant des peintures au plomb dégradées : garage. ':i===51?'Points à examiner : DDR ne déclenche pas à son seuil. ':'Méthodologie générale. ')+'Texte de fin et référence. '.repeat(50)).join('\n');
+const compactDiagnostic=prepareDocs([{name:'diagnostics.pdf',text:diagnosticPages}],{maxTotal:180000,maxDoc:30000})[0];
+assert.ok(compactDiagnostic.text.includes('présence de plomb dans un revêtement dégradé'),'La condensation conserve la conclusion située au milieu de la page');
+assert.ok(compactDiagnostic.text.includes('peintures au plomb dégradées : garage'),'La localisation du défaut reste transmise');
+assert.ok(compactDiagnostic.text.includes('DDR ne déclenche pas à son seuil'),'Les anomalies électriques restent transmises');
+assert.ok(compactDiagnostic.chars_transmitted<=30000,'Les pages prioritaires respectent le budget');
+assert.equal(extractDeterministicFacts([{name:'diagnostic.pdf',text:'Le DPE a été établi le 22 juin. Surface Carrez : 73,90 m².'}]).dpe,null,'La préposition a ne doit jamais devenir une classe DPE A');
+const graphicalDpe=extractDeterministicFacts([{name:'diag.pdf',text:'[PAGE 6 | OCR]\nSurface Carrez : 82 m².\nPerformance énergétique et climatique\nconsommation\n269|10°|5 3\nkWh/m?/an | kg CO,/m?/an\n141 kWh/m?/an énergie finale.\n[PAGE 11 | OCR]\nDPE Évolution après travaux : état actuel consommation: 200 twhte emissions: 10 kg CO2/m²/an'}]);
+assert.equal(graphicalDpe.dpe,'E','Les parasites graphiques ne masquent pas la paire énergétique de l’étiquette');
+assert.equal(graphicalDpe.energy_consumption_kwh_m2,269,'La consommation primaire prévaut sur l’énergie finale');
+assert.equal(graphicalDpe.ghg_kgco2_m2,10);
+assert.equal(extractDeterministicFacts([{name:'diagnostic.pdf',text:'Le DPE a été établi. Classe énergétique : E.'}]).dpe,'E','Une préposition avant la vraie classe ne masque pas cette dernière');
+const noEnergyPraise=applyDeterministicFacts({property:{assets:['DPE individuel plutôt favorable','Garage']},executive_summary:{top_strengths:['DPE A']}},[{name:'diagnostic.pdf',text:'DPE a été établi, étiquette non lisible.'}]);
+assert.deepEqual(noEnergyPraise.property.assets,['Garage'],'Un DPE non établi ne devient pas un atout');
+assert.deepEqual(noEnergyPraise.executive_summary.top_strengths,[],'La synthèse ne vante pas un DPE non établi');
+const fadedUnits=extractDeterministicFacts([{name:'diag.pdf',text:'Surface Carrez : 82 m².\nPerformance énergétique et climatique\nà effet de serre\nconsommation\n269|10°|5 [ee]\nA CHEN\n141 KWh/m²/an émissions de CO,\n'}]);
+assert.equal(fadedUnits.dpe,'E','La paire située sous consommation dans l’étiquette reste exploitable si les unités sont effacées par l’OCR');
+assert.equal(fadedUnits.energy_consumption_kwh_m2,269);
+
+assert.match(marketStrategy(200000,250000,null),/Prix demandé non établi/);
+assert.match(marketStrategy(200000,250000,260000),/au-dessus/);
+assert.match(marketStrategy(200000,250000,220000),/se situe/);
+
+const partialInput={analysis:{property:{dpe:'E',diagnostics:['Plomb dégradé dans le garage'],asking_price:null},risk_flags:{electrical_anomalies:true,voted_major_works:false,recurring_major_technical_issue:false,litigation:false,governance_issue:false,poor_maintenance:false},works:{rejected_or_postponed:['Réfection de la toiture rejetée']},copro_metrics:{}},scores:{documentation:95,evidence_gate:{property:true,strong_ag:true,finance_core_count:0,market:false}}};
+const partialV2=explainScores(partialInput);
+assert.equal(partialV2.property,91,'Chaque retrait explique exactement la note du bien');
+assert.equal(partialV2.copro_status,'partial');
+assert.equal(partialV2.axes.finance,null,'Une finance inconnue n’est ni zéro ni une pénalité');
+assert.equal(partialV2.axes.works,85);
+assert.equal(partialV2.axes.governance,100);
+assert.equal(partialV2.overall_status,'partial');assert.equal(partialV2.overall_axes,2);assert.ok(partialV2.overall>0,'Deux axes donnent une moyenne explicitement provisoire');
+assert.equal(partialV2.market,null,'Pas de score prix sans prix demandé');
+const rescue=hardenScores({...partialInput,meta:{degraded_mode:true}});
+assert.equal(rescue.scores.property,null);assert.equal(rescue.scores.explanation,null,'Le mode de secours ne réintroduit pas de score via les explications');
+
+const nonDegraded=structuredClone(partialInput);nonDegraded.analysis.property.diagnostics=['Plomb présent dans un revêtement non dégradé'];assert.equal(explainScores(nonDegraded).property,94,'Le plomb non dégradé ne reçoit pas la pénalité du plomb dégradé');
+
+const scopeTest=structuredClone(partialInput);scopeTest.analysis.property.garage_extra=true;assert.equal(explainScores(scopeTest).property,94,'Le garage hors prix ne pénalise pas le logement');
+const dangerTest=structuredClone(scopeTest);dangerTest.analysis.property.weaknesses=['Conducteurs non protégés'];assert.equal(explainScores(dangerTest).property,87,'Un danger électrique explicite conserve une retenue supérieure');
+const dpeDate=extractDeterministicFacts([{name:'diagnostic.pdf',text:'DPE établi le : 22/06/2026. Classe énergétique : E.'}]);assert.equal(dpeDate.dpe_date,'22/06/2026');assert.equal(dpeDate.dpe,'E','Pas de double recalcul en 2026');
+
+const {bieniciId,parseBienici,fetchListing,applyListing}=await import('../netlify/lib/listing.mjs');
+const listingURL='https://www.bienici.com/annonce/vente/toulouse/appartement/3pieces/example-123';
+assert.equal(bieniciId('https://www.bienici.com.evil.test/annonce/vente/x/example-123'),null);
+assert.equal(bieniciId('http://127.0.0.1/annonce/vente/x/example-123'),null);
+assert.equal(parseBienici({id:'wrong',price:349000,adType:'buy'},'example-123',listingURL),null);
+assert.equal(parseBienici({id:'example-123',price:349000,adType:'rent'},'example-123',listingURL),null);
+const listingOK=await fetchListing(listingURL,async()=>Response.json({id:'example-123',adType:'buy',price:349000,description:'Un garage de 23 m² complète le bien (proposé en Sus).'}));
+assert.equal(listingOK.asking_price,349000);assert.equal(listingOK.garage_extra,true);
+assert.equal((await fetchListing(listingURL,async()=>{throw Error('unavailable')})).status,'unavailable');
+const priceInput=structuredClone(scopeTest);applyListing(priceInput.analysis,listingOK);priceInput.analysis.market={estimate_low:240000,estimate_high:321000,confidence:'moyenne',dvf_reference:{sample_count:53,dispersion_ratio:1.69}};
+assert.equal(explainScores(priceInput).market,77,'Un prix vérifié réactive le positionnement face aux références existantes');
+
+const {readingPlan}=await import('../pdf-reading-policy.mjs');
+const scan74=Array.from({length:74},(_,i)=>({page:i+1,chars:0,native:''}));
+assert.equal(readingPlan('DDT_COMPLET_GESTION_CANTAGREL.pdf',scan74).targets.length,74,'Toutes les pages du DDT scanné sont traitées');
+assert.equal(readingPlan('fichier.pdf',scan74).targets.length,74,'Un nom générique ne limite jamais l’OCR');
+assert.equal(readingPlan('plan.pdf',scan74).targets.length,74,'Même les plans ne perdent pas leurs pages');
+const {prepareCompleteDocuments}=await import('../netlify/lib/document-passes.mjs');
+const longText='A'.repeat(60000)+'B'.repeat(60000)+'C'.repeat(60000)+'DERNIER FAIT IMPORTANT';const seen=[];
+const allPasses=await prepareCompleteDocuments([{name:'long.pdf',text:longText}],async p=>{seen.push(p.text);return 'Faits de la partie '+p.part});
+assert.equal(seen.join(''),longText,'Les passes couvrent exactement tout le texte sans trou');assert.equal(allPasses.coverage[0].processed_chars,longText.length);
+await assert.rejects(()=>prepareCompleteDocuments([{name:'long.pdf',text:longText}],async()=>''),/DOCUMENT_PASS_FAILED/,'Une lecture intermédiaire vide ne doit pas être masquée');
+await import('../report-summary.js');
+const summaryHTML=globalThis.rvReportHTML({analysis:{property:{address:'<img onerror=alert(1)>',dpe:'F'},documents:{},risk_flags:{}},meta:{document_quality:[{name:'DDT.pdf',quality:'partial',pages:74,weak_pages:64}]},scores:{}});
+assert.ok(summaryHTML.includes('Diagnostic à relire'));assert.ok(!summaryHTML.includes('<img'));assert.ok(!summaryHTML.includes('Fiabilité documentaire'));assert.ok(summaryHTML.includes('<details'));
+
+// Scanned small-home labels must not inherit F/G from regulatory boilerplate.
+const smallLabel={name:'DDT_scan.pdf',text:'[PAGE 1 | OCR] DPE établi le : 30/09/2023. Surface habitable : 23 m². Performance énergétique et climatique\n143|25"|(C @ )— 25\nkWh/m²/an kg CO2/m²/an\nN°ADEME absent. Non valable pour la vente.\n[PAGE 2] Les logements classés DPE F ou G sont concernés.'};
+const smallFacts=extractDeterministicFacts([smallLabel]);
+assert.equal(smallFacts.dpe,'C');
+assert.equal(smallFacts.dpe_validity,'invalid');
+assert.equal(smallFacts.surface_m2,null,'Une surface habitable ne doit pas devenir une surface Carrez');
+assert.equal(extractDeterministicFacts([{name:'DDT.pdf',text:'Les logements classés DPE F ou G sont concernés.'}]).dpe,null);
+const invalidAnalysis=applyDeterministicFacts({property:{dpe:'F'}},[smallLabel]);
+assert.equal(invalidAnalysis.property.dpe,'C');
+assert.ok(invalidAnalysis.questions_before_offer[0].includes('ADEME'));
+const invalidScore=explainScores({analysis:invalidAnalysis,scores:{evidence_gate:{property:true}}});
+assert.equal(invalidScore.property,null,'Un DPE déclaré non valable ne permet pas de noter le logement');
+
+const invalidSummary=globalThis.rvReportHTML({analysis:{property:{dpe_validity:'invalid',asking_price:89000},market:{estimate_low:72000,estimate_high:84000},verdict:{summary:'Prix cohérent'},questions_before_offer:['Demander le DPE valide.']},scores:{},meta:{}});
+assert.ok(!invalidSummary.includes('Prix cohérent'));
+assert.ok(invalidSummary.includes('Obtenir les pièces de copropriété'));
+assert.ok(!invalidSummary.includes('Demander une confirmation'));
+// V3 avoids cumulative penalties for the same technical/management issue.
+const overlap=structuredClone(partialInput);overlap.analysis.risk_flags={voted_major_works:true,recurring_major_technical_issue:true,litigation:true,governance_issue:true,poor_maintenance:true};overlap.analysis.works={rejected_or_postponed:[]};
+const overlapScore=explainScores(overlap);assert.equal(overlapScore.axes.works,88);assert.equal(overlapScore.axes.governance,88);
+overlap.analysis.evidence=[{status:'FACT',claim:'Solde bancaire non restitué de 40000 €.',source:'PV.pdf'}];
+const fundsScore=explainScores(overlap);assert.equal(fundsScore.copro,70);assert.ok(fundsScore.overall<=79);assert.equal(fundsScore.financial_alert,true);
+const {parseListingHtml,listingUrlSafe}=await import('../netlify/lib/listing.mjs');
+const portal='https://www.logic-immo.com/detail-annonce/vente/test/ABC';
+assert.equal(listingUrlSafe('https://localhost/secrets'),null);assert.equal(listingUrlSafe('https://www.logic-immo.com.evil.test/x'),null);assert.equal(listingUrlSafe('https://user:pass@www.logic-immo.com/x'),null);
+assert.equal(bieniciId(listingURL+'/'),'example-123');
+assert.equal(parseListingHtml('<script type="application/ld+json">{"@type":"Apartment","offers":{"price":154000,"priceCurrency":"EUR"}}</script>',portal).asking_price,154000);
+assert.equal(parseListingHtml('<meta property="product:price:amount" content="154000"><meta property="product:price:amount" content="139000">',portal),null,'Des prix contradictoires ne sont pas devinés');
+const visual=globalThis.rvReportHTML({analysis:overlap.analysis,scores:fundsScore,meta:{}});assert.ok(visual.includes('Note globale'));assert.ok(visual.includes('Note provisoire'));assert.ok(visual.includes('Fonds de copropriété non restitués'));
+const {listingSources}=await import('../netlify/lib/listing.mjs');
+assert.deepEqual(listingSources([{type:'web_search_call',status:'completed',action:{type:'open_page',url:portal}}]),[portal]);
+assert.deepEqual(listingSources([{type:'web_search_call',status:'failed',action:{type:'open_page',url:portal}}]),[]);
+console.log('ReVisite reliability tests: OK');
+
+// Agency URLs use verified web lookup, never unrestricted server-side fetching.
+const {listingDirectAllowed}=await import('../netlify/lib/listing.mjs');
+assert.equal(listingUrlSafe('https://agence-immobiliere.fr/annonce?id=123&utm_source=test'),'https://agence-immobiliere.fr/annonce?id=123');
+assert.equal(listingDirectAllowed('https://agence-immobiliere.fr/annonce'),false);
+assert.equal(listingDirectAllowed('https://www.seloger.com/annonce'),true);
+for(const url of ['https://127.0.0.1/x','https://[::1]/x','http://agence.fr/x','https://service.internal/x','https://agence.fr:8443/x'])assert.equal(listingUrlSafe(url),null);

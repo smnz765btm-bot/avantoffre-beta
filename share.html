@@ -19,10 +19,10 @@ ul{padding-left:18px;margin:8px 0}li{margin:6px 0;line-height:1.45;font-size:12p
 </style>
 </head>
 <body>
-<nav><div class="wrap" style="width:100%;display:flex;align-items:center"><div class="brand"><b>[re]</b>visite</div><div class="baseline">Au-delà de la visite.</div></div></nav>
+<nav><div class="wrap" style="width:100%;display:flex;align-items:center"><a class="brand" href="/" aria-label="ReVisite, accueil"><span class="rv-wordmark"><b>[re]</b>visite</span><small class="rv-baseline">Au-delà de la visite.</small></a></div></nav>
 <main><div class="wrap" id="app"><div class="card">Chargement de l’analyse…</div></div></main>
 <div class="footer">ReVisite — Analyse documentaire et aide à la décision avant offre.</div>
-<script>
+<link rel="stylesheet" href="/report-summary.css"><script src="/score-details.js"></script><script src="/report-summary.js"></script><script src="/report-actions.js"></script><script>
 const esc=s=>String(s??'').replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));
 const arr=v=>Array.isArray(v)?v:[];
 const txt=x=>{if(typeof x==='string')return x;if(!x||typeof x!=='object')return'';if(x.claim||x.label||x.title||x.description||x.detail||x.issue||x.work||x.item)return x.claim||x.label||x.title||x.description||x.detail||x.issue||x.work||x.item;if(x.name)return x.name+(x.reason?' — '+x.reason:'');return''};
@@ -32,140 +32,13 @@ const k=(l,v)=>`<div class="kpi"><span>${esc(l)}</span><b>${v}</b></div>`;
 const score=v=>v===null||v===undefined||v===''||!Number.isFinite(Number(v))?null:Math.max(0,Math.min(100,Math.round(Number(v))));
 const val=v=>v===null||v===undefined||v===''?'N/C':esc(v);
 const comparableTable=v=>{const rows=arr(v).filter(x=>x&&x.price).slice(0,6);if(!rows.length)return'<span class="empty">Aucune vente comparable suffisamment fiable.</span>';return '<div class="tableWrap"><table class="compTable"><thead><tr><th>Comparable</th><th>Date</th><th>Distance</th><th>Prix</th><th>Surface</th><th>€/m²</th></tr></thead><tbody>'+rows.map(x=>'<tr><td>'+esc(x.label||x.address||'Comparable')+'</td><td>'+esc(x.date||'—')+'</td><td>'+esc(x.distance_note||((x.distance_m!=null?x.distance_m+' m':'—')))+'</td><td>'+money(x.price)+'</td><td>'+(x.surface!=null?esc(x.surface)+' m²':'—')+'</td><td>'+(x.price_m2!=null?money(x.price_m2):'—')+'</td></tr>').join('')+'</tbody></table></div>'};
-function render(d){
-  const r=d.result||{},a=r.analysis||{},s=r.scores||{},meta=r.meta||{},p=a.property||{},m=a.market||{},c=a.copro_metrics||{},co=a.copro||{},w=a.works||{},bb=a.buyer_blocks||{},dw=bb.diagnostic_works||{},fc=bb.future_copro_costs||{},rb=bb.real_acquisition_budget||{},bc=bb.before_offer_checks||{},ex=a.executive_summary||{},n=a.negotiation||{},v=a.verdict||{},docs=a.documents||{},dvf=m.dvf_reference||{};
-  const propertyGate=s.evidence_gate?.property;
-  const coproGate=s.evidence_gate?.copro;
-  const marketGate=s.evidence_gate?.market;
-  const legacyPropertyUnsupported=propertyGate===undefined&&!p.dpe;
-  const financeCore=[c.annual_budget,c.collective_arrears,c.supplier_debt,c.cash,c.works_fund].filter(x=>x!==null&&x!==undefined&&x!=='').length;
-  const legacyCoproUnsupported=coproGate===undefined&&financeCore<2;
-  const propertyScore=propertyGate===false||legacyPropertyUnsupported?null:score(s.property);
-  const coproScore=coproGate===false||legacyCoproUnsupported?null:score(s.copro);
-  const marketScore=marketGate===false?null:score(s.market);
-  const withheld=Boolean(meta.score_withheld)||propertyScore===null||coproScore===null||marketScore===null;
-  const overall=withheld?null:score(s.overall),documentation=score(s.documentation),confidence=score(s.confidence);
-  const rejected=arr(docs.rejected),quality=arr(meta.document_quality);
-  const partialCount=quality.filter(x=>x?.quality==='partial').length;
-  const dvfUnavailable=meta.dvf_status&&meta.dvf_status!=='ok';
-  document.title=(p.address?`${p.address} — `:'')+'Analyse ReVisite';
-  const scopeClass=rejected.length||partialCount?'scope warn':'scope';
-  const scopeText=rejected.length?`${rejected.length} document(s) exclus car non exploitables ; ils ne sont pas utilisés pour conclure.`:partialCount?`${partialCount} document(s) partiellement lisibles ; seules les informations effectivement extraites sont utilisées.`:'Les pièces exploitées sont indiquées dans le rapport.';
-  document.querySelector('#app').innerHTML=`
-    <div class="eyebrow">Analyse ReVisite partagée</div>
-    <div class="card hero">
-      <h1>${esc(v.label||ex.headline||'Synthèse du dossier')}</h1>
-      <p class="summary">${esc(v.summary||ex.overview||'')}</p>
-      <div class="${scopeClass}"><b>Périmètre documentaire</b><br>${esc(scopeText)} Une information absente n’est jamais assimilée à un défaut.</div>
-      <div class="grid" style="margin-top:14px">
-        ${k('Synthèse globale',overall===null?'N/C':overall+'/100')}
-        ${k('Bien',propertyScore===null?'N/C':propertyScore+'/100')}
-        ${k('Copropriété',coproScore===null?'N/C':coproScore+'/100')}
-        ${k('Marché',marketScore===null?'N/C':marketScore+'/100')}
-      </div>
-      <div class="statusRow">
-        ${documentation!==null?`<span class="statusPill">Couverture documentaire ${documentation}/100</span>`:''}
-        ${confidence!==null?`<span class="statusPill">Fiabilité documentaire ${confidence}/100</span>`:''}
-        ${dvfUnavailable?'<span class="statusPill warn">DVF+ officiel indisponible lors de l’analyse</span>':''}
-        ${meta.degraded_mode?'<span class="statusPill warn">Rapport de secours</span>':'<span class="statusPill ok">Moteur complet</span>'}
-      </div>
-    </div>
-
-    <div class="card"><h2>Le bien</h2>
-      <div class="grid">
-        ${k('Surface',p.surface_m2!=null?esc(p.surface_m2)+' m²':'N/C')}
-        ${k('Pièces',val(p.rooms))}
-        ${k('Étage',val(p.floor))}
-        ${k('DPE',val(p.dpe))}
-      </div>
-      <div class="grid" style="margin-top:9px">
-        ${k('Conso. énergie',p.energy_consumption_kwh_m2!=null?esc(p.energy_consumption_kwh_m2)+' kWh/m²/an':'N/C')}
-        ${k('GES',p.ghg_kgco2_m2!=null?esc(p.ghg_kgco2_m2)+' kgCO₂/m²/an':'N/C')}
-        ${k('Coût énergie bas',money(p.energy_cost_low))}
-        ${k('Coût énergie haut',money(p.energy_cost_high))}
-      </div>
-      <p class="summary">${esc(p.property_analysis||'')}</p>
-      <div class="cols"><div class="box"><h3>Éléments favorables documentés</h3>${list(ex.top_strengths||p.assets,3)}</div><div class="box"><h3>Points à clarifier</h3>${list(ex.top_risks||p.weaknesses,3,'Aucun point critique documenté.')}</div></div>
-    </div>
-
-    <div class="card"><h2>Prix & marché</h2>
-      ${dvfUnavailable?'<div class="notice"><b>Source DVF+ officielle momentanément indisponible.</b> ReVisite n’affiche volontairement ni estimation, ni comparables, ni recommandation de prix tant que ces données ne peuvent pas être vérifiées.</div>':''}
-      <div class="grid" style="margin-top:10px">
-        ${k('Prix demandé',money(p.asking_price))}
-        ${k('Valeur estimée',m.estimate_low!=null&&m.estimate_high!=null?money(m.estimate_low)+' – '+money(m.estimate_high):'N/C')}
-        ${k('Offre indicative',m.offer_low!=null&&m.offer_high!=null?money(m.offer_low)+' – '+money(m.offer_high):'N/C')}
-        ${k('Prix / m²',p.price_per_m2!=null?money(p.price_per_m2):'N/C')}
-      </div>
-      <p class="summary">${esc(m.analysis||m.positioning||'')}</p>
-      ${dvf.sample_count?`<div class="statusRow"><span class="statusPill">${esc(dvf.sample_count)} ventes analysées</span>${dvf.radius_m?`<span class="statusPill">Rayon env. ${esc(dvf.radius_m)} m</span>`:''}${dvf.median_price_m2?`<span class="statusPill">Médiane ${money(dvf.median_price_m2)}/m²</span>`:''}</div>`:''}
-      <h3>Ventes comparables retenues</h3>${comparableTable(m.comparables)}
-      ${n.recommended_strategy?`<h3>Lecture pour l’offre</h3><p class="summary">${esc(n.recommended_strategy)}</p>${list(n.arguments,6,'Aucun argument de négociation suffisamment documenté.')}`:''}
-    </div>
-
-    <div class="card"><h2>Copropriété & charges</h2>
-      <div class="grid">
-        ${k('Charges / an',money(c.lot_annual_charges))}
-        ${k('Solde individuel',money(c.individual_balance))}
-        ${k('Impayés collectifs',money(c.collective_arrears))}
-        ${k('Fonds travaux',money(c.works_fund))}
-      </div>
-      <p class="summary">${esc(co.financial_analysis||'')}</p>
-      ${co.governance_analysis?`<h3>Gouvernance</h3><p class="summary">${esc(co.governance_analysis)}</p>`:''}
-      ${co.technical_analysis?`<h3>Situation technique</h3><p class="summary">${esc(co.technical_analysis)}</p>`:''}
-      <div class="cols"><div class="box"><h3>Éléments favorables</h3>${list(co.strengths,6,'Aucun élément favorable suffisamment documenté.')}</div><div class="box"><h3>Points à surveiller</h3>${list(co.weaknesses,6,'Aucun point critique documenté.')}</div></div>
-      <div class="cols" style="margin-top:12px">
-        <div class="box"><h3>Travaux votés / à vérifier</h3>${list(w.voted,8,'Aucun travail voté exploitable identifié.')}</div>
-        <div class="box"><h3>PPPT / travaux discutés</h3>${list([...arr(w.recommended_pppt),...arr(w.discussed)],8,'Aucun élément exploitable identifié.')}</div>
-      </div>
-      ${arr(w.recent_completed).length?`<h3>Historique de travaux réalisés</h3>${list(w.recent_completed,8)}`:''}
-    </div>
-
-    <div class="card"><h2>Diagnostics & exposition financière</h2>
-      ${list(p.diagnostics,8,'Aucun diagnostic exploitable.') }
-      <p class="summary">${esc(dw.summary||'')}</p>${list(dw.items,10,'Aucun travail privatif chiffrable identifié.')}
-      <div class="grid">
-        ${k('Travaux privatifs bas',money(dw.total_budget_low))}
-        ${k('Travaux privatifs haut',money(dw.total_budget_high))}
-        ${k('Appel de fonds courant',money(c.current_call_amount))}
-        ${k('Total à payer relevé',money(c.total_to_pay))}
-      </div>
-      <h3>Dépenses copropriété futures</h3><p class="summary">${esc(fc.summary||'')}</p>${list(fc.items,8,'Aucune dépense future chiffrable établie.')}
-      ${arr(fc.unknown_exposure).length?`<h3>Exposition encore inconnue</h3>${list(fc.unknown_exposure,8)}`:''}
-      <h3>Budget réel d’acquisition</h3><div class="grid">${k('Prix',money(rb.purchase_price))}${k('Frais d’acquisition',money(rb.acquisition_fees_estimate))}${k('Total connu bas',money(rb.known_total_low))}${k('Total connu haut',money(rb.known_total_high))}</div>
-      <p class="summary">${esc(rb.summary||'')}</p>${arr(rb.unknown_costs).length?`<h3>Coûts non chiffrés</h3>${list(rb.unknown_costs,8)}`:''}
-    </div>
-
-    <div class="card"><h2>À vérifier avant l’offre</h2>
-      <p class="summary">${esc(bc.summary||'')}</p>
-      ${list(bc.checks?.length?bc.checks:a.questions_before_offer,8)}
-      ${arr(bc.inconsistencies).length?`<h3>Incohérences à résoudre</h3>${list(bc.inconsistencies,8)}`:''}
-      ${arr(bc.negotiation_impacts).length?`<h3>Éléments pouvant peser dans la négociation</h3>${list(bc.negotiation_impacts,8)}`:''}
-      ${arr(a.questions_before_offer).length?`<h3>Questions concrètes à poser</h3>${list(a.questions_before_offer,8)}`:''}
-    </div>
-
-    <div class="card"><h2>Documents & traçabilité</h2>
-      <div class="cols">
-        <div class="box"><h3>Documents exploités</h3>${list(docs.received,30)}</div>
-        <div class="box"><h3>Documents exclus / à obtenir</h3>${rejected.length?list(rejected,30):''}${list(docs.missing_or_to_obtain,10,'Aucun document complémentaire demandé.')}</div>
-      </div>
-      <h3>Documents ou informations à obtenir</h3>${list(docs.missing_or_to_obtain,12,'Aucun document complémentaire demandé.')}
-      ${arr(docs.quality_notes).length?`<h3>Qualité de lecture</h3>${list(docs.quality_notes,12)}`:''}
-      ${arr(a.evidence).length?`<h3>Faits sourcés</h3>${list(a.evidence.filter(x=>x?.status==='FACT'),24,'Aucun fait n’a pu être qualifié de FACT avec une source explicite.')}`:''}
-    </div>
-
-    <div class="card"><h2>Conclusion</h2>
-      <p class="summary">${esc(v.why||v.summary||ex.overview||'')}</p>
-      <div class="cols"><div class="box"><h3>Conditions rassurantes</h3>${list(v.go_if,8,'Aucune condition supplémentaire formulée.')}</div><div class="box"><h3>Cas qui doivent faire reconsidérer l’offre</h3>${list(v.stop_if,8,'Aucun seuil d’arrêt formalisé.')}</div></div>
-      <p class="source">ReVisite distingue les faits documentés, les informations à confirmer et les données indisponibles. Un champ N/C signifie « non calculé », pas « mauvais ».</p>
-    </div>
-  `;
-}
+function render(d){const r=d.result||{};document.title=(r.analysis?.property?.address||'Votre dossier')+' — ReVisite';document.querySelector('#app').innerHTML=window.rvReportHTML(r);}
 async function init(){
   const id=new URLSearchParams(location.search).get('id');
   if(!id){document.querySelector('#app').innerHTML='<div class="card error"><h2>Lien de partage invalide</h2></div>';return}
-  try{const r=await fetch('/api/shared-analysis?id='+encodeURIComponent(id));const d=await r.json();if(!r.ok)throw Error(d.error||'Analyse introuvable');render(d)}
+  try{const r=await fetch('/api/shared-analysis?id='+encodeURIComponent(id)+'&revision=4',{cache:'no-store'});const d=await r.json();if(!r.ok)throw Error(d.error||'Analyse introuvable');render(d)}
   catch(e){document.querySelector('#app').innerHTML=`<div class="card error"><h2>Analyse indisponible</h2><p>${esc(e.message)}</p></div>`}
 }
 init();
 </script>
-</body></html>
+<link rel="stylesheet" href="/brand-polish.css"></body></html>
