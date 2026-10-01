@@ -3,7 +3,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "test": "node scripts/reliability-tests.mjs",
+    "test": "node scripts/reliability-tests.mjs && node scripts/ocr-regression-tests.mjs",
     "build": "npm test && node build-revisite.js"
   },
   "dependencies": {
