@@ -552,6 +552,13 @@ function normalizedOfficialCandidates(candidates=[],property={}){
     const key=text(x.raw?.id_mutation)||[x.date,x.price,x.surface,text(x.raw?.address)].join('|');
     if(seen.has(key))return false;seen.add(key);return true;
   });
+  // Isolated extremes are not comparable evidence; preserve small samples intact.
+  if(list.length>=5){
+    const prices=list.map(x=>x.price_m2),mid=median(prices);
+    const mad=median(prices.map(x=>Math.abs(x-mid)));
+    const tolerance=Math.max(mid*.65,4.5*mad);
+    list=list.filter(x=>Math.abs(x.price_m2-mid)<=tolerance);
+  }
   return list;
 }
 
@@ -669,7 +676,21 @@ export function deterministicScores(a,docs=[],marketMeta={}){
   let works=25;if(r.voted_major_works)works-=10;if(r.pppt_significant_medium_term)works-=6;if(r.recurring_major_technical_issue)works-=5;if(r.recent_major_works_completed)works+=2;works=clamp(works,0,25);
   let governance=20;if(r.litigation)governance-=5;if(r.governance_issue)governance-=6;if(r.asl_active)governance-=2;governance=clamp(governance,0,20);
   let technical=15;if(r.poor_maintenance)technical-=6;if(r.recurring_major_technical_issue)technical-=4;if(r.recent_major_works_completed)technical+=2;technical=clamp(technical,0,15);
-  const copro=Math.round(finance+works+governance+technical);
+  let copro=Math.round(finance+works+governance+technical);
+  const budget=num(a?.copro_metrics?.annual_budget);
+  const arrears=num(a?.copro_metrics?.collective_arrears),debt=num(a?.copro_metrics?.supplier_debt);
+  const effectiveArrears=ar??(budget>0&&arrears!==null?arrears/budget*100:null);
+  const effectiveDebt=sr??(budget>0&&debt!==null?debt/budget*100:null);
+  // Amounts must affect the result even when the model omits derived ratios.
+  if(ar===null&&effectiveArrears!==null)finance-=effectiveArrears>25?18:effectiveArrears>15?12:effectiveArrears>8?6:0;
+  if(sr===null&&effectiveDebt!==null)finance-=effectiveDebt>15?7:effectiveDebt>8?4:0;
+  finance=clamp(finance,0,40);
+  copro=Math.round(finance+works+governance+technical);
+  const financialUncertainty=(arrears>0||debt>0)&&!(budget>0);
+  const severeFinance=effectiveArrears>25||effectiveDebt>15;
+  if(financialUncertainty)copro=Math.min(copro,74);
+  if(severeFinance)copro=Math.min(copro,64);
+  if(r.litigation||r.governance_issue)copro=Math.min(copro,74);
 
   let market=55;const ask=num(a?.property?.asking_price),lo=num(a?.market?.estimate_low),hi=num(a?.market?.estimate_high);
   if(ask&&lo&&hi&&lo<=hi){if(ask>=lo&&ask<=hi)market=84;else if(ask<lo)market=88;else market=clamp(Math.round(84-((ask-hi)/hi*100)*2.5),35,84)}
@@ -706,12 +727,25 @@ export function deterministicScores(a,docs=[],marketMeta={}){
 
   const propertyScore=propertyEvidence?property:null;
   const coproScore=coproEvidence?copro:null;
-  const marketScore=marketEvidence?market:null;
+  const standingLabels={simple:"Simple",standard:"Standard",soigne:"Soigné",premium:"Haut de gamme"};
+  const standing=Object.hasOwn(standingLabels,marketMeta.standing)?marketMeta.standing:"";
+  const adjustment={simple:-3,standard:0,soigne:2,premium:4}[standing]||0;
+  // Small, declared preference adjustment; never alters observed DVF values.
+  const adjusted=adjustment>0?Math.max(market,Math.min(84,market+adjustment)):clamp(market+adjustment);
+  const marketScore=marketEvidence?adjusted:null;
+  const applied=marketEvidence?adjusted-market:0;
+  const market_context={standing,base_score:marketEvidence?market:null,adjustment_points:applied,
+    note:standing?`Standing déclaré : ${standingLabels[standing]}. Ajustement indicatif du score prix : ${applied>0?"+":""}${applied} point(s). Cette appréciation n’est pas vérifiée et ne modifie pas les références DVF.`:""};
   const overall=docs.length>0&&documentation>=60&&confidence>=60&&propertyScore!==null&&coproScore!==null&&marketScore!==null
     ?Math.round(propertyScore*.30+coproScore*.40+marketScore*.30):null;
 
   return{
-    property:propertyScore,copro:coproScore,market:marketScore,documentation,confidence,overall,
+    property:propertyScore,copro:coproScore,market:marketScore,market_context,documentation,confidence,overall,
+    score_reasons:{
+      property:propertyEvidence?'':"Surface, pièces, DPE et diagnostics doivent être confirmés dans les documents pour noter le bien.",
+      copro:!coproEvidence?"PV d’AG lisible et au moins deux données financières collectives nécessaires.":financialUncertainty?"Dettes signalées ; leur poids reste à préciser faute de budget annuel.":severeFinance?"Poids élevé des impayés ou des dettes fournisseurs par rapport au budget.":r.litigation||r.governance_issue?"Contentieux ou difficulté de gestion à clarifier.":'',
+      market:marketEvidence?'':!ask?"Prix affiché manquant.":marketSampleCount<8?`${marketSampleCount} ventes retenues : au moins 8 sont nécessaires pour attribuer un score prix.`:"Références trop dispersées ou insuffisamment fiables pour attribuer un score prix."
+    },
     axes:{finance,works,governance,technical},coverage,
     evidence_gate:{property:propertyEvidence,copro:coproEvidence,market:marketEvidence,finance_core_count:financeCoreCount,strong_ag:strongAg,strong_accounts:strongAccounts,official_count:officialCount,market_sample_count:marketSampleCount,dispersion_ratio:dispersionRatio}
   };

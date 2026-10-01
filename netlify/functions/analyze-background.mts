@@ -153,6 +153,22 @@ function dvfPromptRows(rows:any[]){
   }).join("\n");
 }
 
+async function readListingPrice(listingUrl:string){
+  try{
+    const url=new URL(listingUrl);
+    // Direct reader for the agency source; other sources retain web lookup.
+    if(url.protocol!=="https:"||!/(^|\.)adl-immo\.fr$/i.test(url.hostname)||url.port||url.username||url.password)return null;
+    const rsp=await fetchWithTimeout(url.href,{redirect:"error",headers:{Accept:"text/html"}},10000);
+    if(!rsp.ok)return null;
+    const html=await rsp.text();
+    const text=html.replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi," ").replace(/<[^>]*>/g," ").replace(/&(?:nbsp|#160);/gi," ").replace(/&euro;/gi,"€").replace(/\s+/g," ");
+    const match=text.match(/Prix\s+de\s+vente\s*:\s*([0-9][0-9\s.,]*)\s*€/i);
+    if(!match)return null;
+    const price=Number(match[1].replace(/\s/g,"").replace(",","."));
+    return Number.isFinite(price)&&price>0?price:null;
+  }catch{return null}
+}
+
 function getOpenAIKey(){
   const direct=Netlify.env.get("OPENAI_API_KEY");
   if(direct)return direct;
@@ -160,7 +176,7 @@ function getOpenAIKey(){
 }
 
 export default async(req:Request,_context:Context)=>{
-  let jobId="";const store=jobStore();
+  let jobId="";const store=jobStore();let recoveryContext:any=null,pendingReport:any=null;
   try{
     const trigger:any=await req.json();
     jobId=String(trigger?.jobId||"").replace(/[^a-zA-Z0-9_-]/g,"").slice(0,80);
@@ -168,6 +184,11 @@ export default async(req:Request,_context:Context)=>{
     const inputKey=`input-${jobId}`;
     const body:any=await store.get(inputKey,{type:"json"});
     if(!body)throw new Error("Les données de l'analyse sont introuvables.");
+    recoveryContext={
+      address:String(body?.address||"").trim().slice(0,300),
+      docs:Array.isArray(body?.documents)?body.documents.slice(0,30):[],
+      documentIssues:Array.isArray(body?.documentIssues)?body.documentIssues.slice(0,30):[]
+    };
     await store.delete(inputKey);
     await store.setJSON(jobId,{status:"running",started_at:new Date().toISOString(),progress:"Analyse en cours",expires_at:expiresIn(1000*60*60*3)});
 
@@ -178,6 +199,10 @@ export default async(req:Request,_context:Context)=>{
     if(!listingUrl&&!address&&docs.length===0)throw new Error("Ajoutez au moins une annonce, une adresse ou un document.");
 
     let prepared=prepareDocs(docs),preparedChars=prepared.reduce((s:number,d:any)=>s+(Number(d.chars_transmitted)||0),0);
+    const manualPrice=num(body?.askingPrice);
+    const standing=["simple","standard","soigne","premium"].includes(body?.standing)?body.standing:"";
+    const listingPrice=manualPrice!==null&&manualPrice>0?manualPrice:listingUrl?await readListingPrice(listingUrl):null;
+    const priceSource=manualPrice!==null&&manualPrice>0?"Prix saisi par l’utilisateur":listingUrl;
     const dvf:any=await fetchDvfCandidates(address,store);
     const officialDvf=dvf.status==="ok"?dvfPromptRows(dvf.candidates):"Aucune donnée DVF+ officielle n'a pu être récupérée automatiquement pour cette analyse.";
 
@@ -202,7 +227,7 @@ RÈGLES DE FIABILITÉ
 PRIX / MARCHÉ
 - Les lignes DVF+ fournies dans le message utilisateur proviennent du Cerema. Utilise-les comme source prioritaire pour les ventes enregistrées.
 - N'invente AUCUNE vente DVF supplémentaire. Si les ventes fournies sont insuffisantes, indique une confiance faible ou moyenne.
-- L'URL d'annonce peut être recherchée uniquement pour compléter les caractéristiques ou le prix demandé. Une annonce n'est jamais une vente réalisée.
+- Si une URL d’annonce est fournie, utilise la recherche web pour consulter cette annonce exacte et relever son prix de vente affiché dans property.asking_price. Cette vérification reste nécessaire en mode compact. N’utilise pas le prix d’une autre annonce, une mensualité ou un prix au m². Cite l’URL dans evidence. Si le prix ne peut pas être vérifié, conserve null et indique que la lecture de l’annonce n’a pas abouti. Une annonce n’est jamais une vente réalisée.
 - Ne propose aucun montant d'offre automatique. La fourchette de valeur est recalculée après ta réponse à partir des seuls comparables DVF vérifiés.
 
 COPROPRIÉTÉ
@@ -232,7 +257,7 @@ Retourne uniquement un objet JSON valide correspondant aux rubriques demandées.
       evidence:[{claim:"",status:"FACT|INFERENCE|UNKNOWN",source:"",page:null}],questions_before_offer:[],verdict:{label:"",summary:"",vigilance:"faible|modérée|forte",why:"",go_if:[],stop_if:[]}
     };
 
-    const buildUser=(preparedDocs:any[],compact=false)=>`ADRESSE DU BIEN:\n${address||"non fournie"}\n\nURL ANNONCE:\n${listingUrl||"non fournie"}\n\nINFORMATIONS COMPLÉMENTAIRES:\n${extra||"aucune"}\n\nDOCUMENTS NON EXPLOITABLES / EXCLUS DE L'ANALYSE:\n${documentIssues.length?documentIssues.map((x:any)=>`- ${x.name}: ${x.reason}`).join("\n"):"aucun"}\n\nVENTES DVF+ OFFICIELLES DU SECTEUR (CANDIDATS BRUTS À FILTRER SELON LE BIEN):\n${officialDvf}\n\nSTRUCTURE JSON ATTENDUE:\n${jsonText(schemaHint)}\n\n${compact?"MODE DE SECOURS COMPACT : sois particulièrement concis et priorise les montants, décisions d’AG, diagnostics, charges, travaux et incohérences.\n\n":""}DOCUMENTS EXTRAITS:\n${preparedDocs.map((d:any,i:number)=>`\n--- DOCUMENT ${i+1}: ${d.name} | pages=${d.pages??"?"} | lecture=${d.quality||"non qualifiée"} | caractères transmis=${d.chars_transmitted}/${d.chars_source}${d.truncated?" | ÉCHANTILLONNÉ":""} ---\n${d.text}`).join("\n")}`;
+    const buildUser=(preparedDocs:any[],compact=false)=>`ADRESSE DU BIEN:\n${address||"non fournie"}\n\nURL ANNONCE:\n${listingUrl||"non fournie"}\nPRIX DE VENTE À UTILISER : ${listingPrice===null?"non récupéré":listingPrice+" EUR, source : "+priceSource}\n\nINFORMATIONS COMPLÉMENTAIRES:\n${extra||"aucune"}\nStanding déclaré par l’utilisateur : ${standing||"non précisé"}. Appréciation subjective, à confirmer lors de la visite ; aucune majoration automatique de valeur DVF.\n\nDOCUMENTS NON EXPLOITABLES / EXCLUS DE L'ANALYSE:\n${documentIssues.length?documentIssues.map((x:any)=>`- ${x.name}: ${x.reason}`).join("\n"):"aucun"}\n\nVENTES DVF+ OFFICIELLES DU SECTEUR (CANDIDATS BRUTS À FILTRER SELON LE BIEN):\n${officialDvf}\n\nSTRUCTURE JSON ATTENDUE:\n${jsonText(schemaHint)}\n\n${compact?"MODE DE SECOURS COMPACT : sois particulièrement concis et priorise les montants, décisions d’AG, diagnostics, charges, travaux et incohérences.\n\n":""}DOCUMENTS EXTRAITS:\n${preparedDocs.map((d:any,i:number)=>`\n--- DOCUMENT ${i+1}: ${d.name} | pages=${d.pages??"?"} | lecture=${d.quality||"non qualifiée"} | caractères transmis=${d.chars_transmitted}/${d.chars_source}${d.truncated?" | ÉCHANTILLONNÉ":""} ---\n${d.text}`).join("\n")}`;
 
     let data:any=null,parsed:any=null,totalUsage:any=null,modelAttempts=0,fallbackCompaction=false,lastError:any=null;
     for(let attempt=1;attempt<=3;attempt++){
@@ -249,7 +274,7 @@ Retourne uniquement un objet JSON valide correspondant aux rubriques demandées.
       const user=buildUser(prepared,attempt>=2);
       const payload:any={
         model,input:[{role:"system",content:[{type:"input_text",text:system}]},{role:"user",content:[{type:"input_text",text:user}]}],
-        tools:attempt===1&&listingUrl?[{type:"web_search"}]:[],reasoning:{effort:"low"},max_output_tokens:attempt===1?12000:attempt===2?8000:6000,
+        tools:listingUrl&&listingPrice===null?[{type:"web_search"}]:[],reasoning:{effort:"low"},max_output_tokens:attempt===1?12000:attempt===2?8000:6000,
         text:{format:{type:"json_object"},verbosity:"low"},store:false,prompt_cache_key:"revisite-analysis-v5"
       };
       try{
@@ -278,6 +303,7 @@ Retourne uniquement un objet JSON valide correspondant aux rubriques demandées.
     const degradedMode=Boolean(lastError||!parsed);
     let analysis=degradedMode?basicFallbackAnalysis(docs,address):normalizeAnalysis(parsed);
     analysis=applyDeterministicFacts(analysis,docs);
+    if(listingPrice!==null){analysis.property.asking_price=listingPrice;analysis.evidence.push({claim:`Prix de vente affiché : ${listingPrice} EUR`,status:"FACT",source:priceSource,page:null})}
     if(address)analysis.property.address=address;
     analysis=applyOfficialMarketData(analysis,dvf.candidates||[]);
     analysis.documents=analysis.documents||{};
@@ -317,24 +343,57 @@ Retourne uniquement un objet JSON valide correspondant aux rubriques demandées.
     const p=analysis.property||{};
     if(p.asking_price&&p.surface_m2&&!p.price_per_m2)p.price_per_m2=Math.round(Number(p.asking_price)/Number(p.surface_m2));
     const officialCount=Array.isArray(analysis?.market?.comparables)?analysis.market.comparables.filter((x:any)=>x?.type==="DVF").length:0;
-    const scores=deterministicScores(analysis,docs,{officialCount});
+    const scores=deterministicScores(analysis,docs,{officialCount,standing});
     analysis=applyVerdictGuardrails(analysis,scores,documentIssues);
+    if(standing){analysis.market.analysis+=(" "+scores.market_context.note)}
     if(degradedMode){
       scores.property=null;scores.copro=null;scores.market=null;scores.overall=null;scores.confidence=Math.min(Number(scores.confidence)||0,35);
     }
     const result={analysis,scores,meta:{
-      model,document_count:docs.length,rejected_document_count:documentIssues.length,beta:true,generated_at:new Date().toISOString(),
+      model,listing_url:listingUrl,listing_price:listingPrice,price_source:priceSource,standing,document_count:docs.length,rejected_document_count:documentIssues.length,beta:true,generated_at:new Date().toISOString(),
       input_chars:preparedChars,dvf_status:dvf.status,dvf_source:dvf.source||null,dvf_candidate_count:Array.isArray(dvf.candidates)?dvf.candidates.length:0,
       dvf_cache_hit:Boolean(dvf.cache_hit),usage:totalUsage||null,model_attempts:modelAttempts,fallback_compaction:fallbackCompaction,degraded_mode:degradedMode,score_withheld:scores.overall===null,cache_hit:false,
       document_quality:docs.map((d:any)=>({name:String(d?.name||"document"),quality:String(d?.quality||"unknown"),pages:Number(d?.pages)||null,weak_pages:Number(d?.weakPages)||0,ocr_pages:Number(d?.ocrPages)||0}))
     }};
+    pendingReport=result;
     hardenScores(result);
     await store.setJSON(jobId,{status:"done",result,expires_at:expiresIn(1000*60*60*3)});
+    pendingReport=null;
     if(!degradedMode&&cacheKey.startsWith("analysis-cache-")){
       try{await store.setJSON(cacheKey,{result,expires_at:expiresIn(1000*60*60*24)})}catch{}
     }
   }catch(err:any){
     console.error("ReVisite background error",err);
+    if(jobId){
+      try{
+        const saved:any=await store.get(jobId,{type:"json"});
+        if(saved?.status==="done"&&saved?.result)return;
+      }catch(readErr){console.error("ReVisite recovery read error",readErr)}
+
+      const now=new Date().toISOString();
+      try{
+        let result=pendingReport;
+        if(!result&&recoveryContext){
+          const docs:Doc[]=recoveryContext.docs||[];
+          const analysis=basicFallbackAnalysis(docs,recoveryContext.address||"");
+          analysis.documents.rejected=recoveryContext.documentIssues||[];
+          result={
+            analysis,
+            scores:{property:null,copro:null,market:null,overall:null,confidence:0},
+            meta:{
+              model:"recovery-fallback",document_count:docs.length,rejected_document_count:(recoveryContext.documentIssues||[]).length,
+              beta:true,generated_at:now,degraded_mode:true,score_withheld:true,recovery_fallback:true,
+              document_quality:docs.map((d:any)=>({name:String(d?.name||"document"),quality:String(d?.quality||"unknown"),pages:Number(d?.pages)||null,weak_pages:Number(d?.weakPages)||0,ocr_pages:Number(d?.ocrPages)||0}))
+            }
+          };
+        }
+        if(result){
+          try{hardenScores(result)}catch(scoreErr){console.error("ReVisite recovery score hardening error",scoreErr)}
+          await store.setJSON(jobId,{status:"done",result,expires_at:expiresIn(1000*60*60*3)});
+          return;
+        }
+      }catch(recoveryErr){console.error("ReVisite report recovery error",recoveryErr)}
+    }
     const message=String(err?.message||"");
     const error_code=
       /REPORT_OUTPUT_LIMIT|Réponse IA non structurée|Aucun rapport exploitable/i.test(message)?"MODEL_OUTPUT":
@@ -342,7 +401,10 @@ Retourne uniquement un objet JSON valide correspondant aux rubriques demandées.
       /context|too long|too large|request too large|413/i.test(message)?"INPUT_TOO_LARGE":
       /MODEL_TIMEOUT|timeout|aborted|5\d\d|server_error|temporarily unavailable/i.test(message)?"PROVIDER_TRANSIENT":
       "ENGINE";
-    if(jobId)await store.setJSON(jobId,{status:"error",error_code,expires_at:expiresIn(1000*60*60)});
+    if(jobId){
+      try{await store.setJSON(jobId,{status:"error",error_code,expires_at:expiresIn(1000*60*60)})}
+      catch(saveErr){console.error("ReVisite error status persistence failed",saveErr)}
+    }
   }
 };
 
