@@ -352,3 +352,18 @@ assert.equal(premium.market-baseline.market,4,'Le standing haut de gamme doit mo
 assert.equal(standingAnalysis.market.estimate_high,321000,'Le standing ne modifie jamais les références DVF');
 assert.equal(deterministicScores({property:{},market:standingAnalysis.market},[],{standing:'premium'}).market,null,'Le standing seul ne permet pas de calculer un score');
 assert.equal(deterministicScores(standingAnalysis,[],{standing:'invalid'}).market,baseline.market,'Un standing inconnu ne doit pas modifier le score');
+
+// Screenshot regression: isolated 10,500 €/m² transaction among ~3,000–3,700.
+const screenshotSales=[[202750,66],[310000,84],[310090,84],[265000,88],[630000,60]].map(([price,surface],i)=>({price,surface,type:'APPARTEMENT',date:'2025-02-28',address:'Test '+i,distance_m:300}));
+const cleanedMarket=applyOfficialMarketData({property:{title:'Appartement',surface_m2:65.56,asking_price:154000}},screenshotSales);
+assert.equal(cleanedMarket.market.dvf_reference.sample_count,4);
+assert.ok(cleanedMarket.market.comparables.every(x=>x.price_m2<5000),'An isolated extreme must not appear as a retained comparable');
+assert.equal(deterministicScores(cleanedMarket).market,null,'Filtering cannot manufacture sufficient market evidence');
+assert.match(deterministicScores(cleanedMarket).score_reasons.market,/4 ventes/);
+const debtCase={property:{},market:{},risk_flags:{},copro_metrics:{supplier_debt:16000,works_fund:20000}};
+assert.ok(deterministicScores(debtCase,fakeDocs).copro<=74,'Unquantified debt exposure must not receive a reassuring 95');
+debtCase.copro_metrics.annual_budget=80000;
+assert.ok(deterministicScores(debtCase,fakeDocs).copro<=64,'Material supplier debt must count even without a supplied ratio');
+const cleanCase={property:{},market:{},risk_flags:{},copro_metrics:{annual_budget:80000,supplier_debt:0,collective_arrears:0}};
+assert.ok(deterministicScores(cleanCase,fakeDocs).copro>=80,'Documented zero debt must remain reassuring');
+console.log('Report consistency regressions: OK');
